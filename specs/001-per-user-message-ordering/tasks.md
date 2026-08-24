@@ -184,8 +184,8 @@ nothing was accepted during the outage and nothing phantom appears afterwards.
 
 ## Phase 11: Compose and Integration Validation
 
-- [ ] T025 Add `docker-compose.yml` at the repository root with PostgreSQL plus two middleware instances on ports 5001 and 5002, each configured with its **peer's** callback base URI so every callback crosses a process boundary (R-011); add `src/Middleware/appsettings.Development.json` defaults and document every environment variable the compose file uses, keeping the connection string out of tracked configuration per the constitution
-- [ ] T026 Walk `specs/001-per-user-message-ordering/quickstart.md` end to end against `docker compose up -d`, confirming Quality Gates 1 through 6 by hand with two real instances, and correct any command in `quickstart.md` that does not work exactly as written
+- [X] T025 Add `docker-compose.yml` at the repository root with PostgreSQL plus two middleware instances on ports 5001 and 5002, each configured with its **peer's** callback base URI so every callback crosses a process boundary (R-011); add `src/Middleware/appsettings.Development.json` defaults and document every environment variable the compose file uses, keeping the connection string out of tracked configuration per the constitution
+- [X] T026 Walk `specs/001-per-user-message-ordering/quickstart.md` end to end against `docker compose up -d`, confirming Quality Gates 1 through 6 by hand with two real instances, and correct any command in `quickstart.md` that does not work exactly as written
 
 **Checkpoint**: The gates that must be demonstrated by running the system, not by inspection, have been.
 

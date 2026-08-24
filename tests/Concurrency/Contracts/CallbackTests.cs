@@ -128,6 +128,32 @@ public sealed class CallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task An_all_zeros_identifier_is_unknown_rather_than_malformed()
+    {
+        // A well-formed UUID that names no message. Answering 400 here while answering 404 for
+        // every other unknown identifier would be an inconsistency a caller could not reason
+        // about; only an absent field is malformed.
+        await using var instance = NewInstance();
+        using var client = instance.CreateClient();
+
+        var response = await PostCallbackAsync(client, Guid.Empty, "completed", answer: "ghost");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_callback_without_a_message_identifier_is_rejected()
+    {
+        await using var instance = NewInstance();
+        using var client = instance.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/callbacks/llm",
+            new { status = "completed", answer = "orphan" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task A_malformed_callback_is_rejected()
     {
         await using var instance = NewInstance();

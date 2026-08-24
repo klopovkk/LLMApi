@@ -26,7 +26,12 @@ public static class CallbackEndpoints
         // No caller verification of any kind (FR-020a). Every caller is trusted, because the
         // target environment is a local composed deployment.
 
-        if (request is null || request.MessageId == Guid.Empty)
+        // Absent is malformed; all-zeros is merely unknown. The distinction matters because
+        // 00000000-0000-0000-0000-000000000000 is a perfectly well-formed UUID that simply names
+        // no message, and answering 400 for it while answering 404 for every other unknown
+        // identifier would be an inconsistency a caller could not reason about. A nullable field
+        // is what lets the two cases be told apart at all.
+        if (request?.MessageId is not { } messageId)
         {
             return Results.Problem(
                 title: "Invalid callback.",
@@ -50,7 +55,7 @@ public static class CallbackEndpoints
         }
 
         var userId = await store.TryCompleteAsync(
-            request.MessageId,
+            messageId,
             finalState.Value,
             finalState == MessageState.Completed ? request.Answer : null,
             finalState == MessageState.Failed
@@ -64,7 +69,7 @@ public static class CallbackEndpoints
             // Those need different answers: unknown is a client error (FR-015), while an
             // already-final message is the duplicate case and must look like success (FR-014), as
             // must a callback arriving after the claim expired (FR-013b).
-            var existing = await store.GetByIdAsync(request.MessageId, cancellationToken);
+            var existing = await store.GetByIdAsync(messageId, cancellationToken);
 
             if (existing is null)
             {
@@ -85,7 +90,7 @@ public static class CallbackEndpoints
 }
 
 public sealed record CompletionCallbackRequest(
-    Guid MessageId,
+    Guid? MessageId,
     string? Status,
     string? Answer,
     string? Error);
