@@ -193,10 +193,10 @@ nothing was accepted during the outage and nothing phantom appears afterwards.
 
 ## Phase 12: Final Validation
 
-- [ ] T027 Add `tests/Concurrency/LoggingPolicyTests.cs` capturing log output across a full message lifecycle and asserting the submitted content string never appears at any level (FR-021). If it fails, fix the offending call sites in `src/Middleware/` and `src/LLM.FakeProvider/` in a separate follow-up commit
-- [ ] T028 [P] Add `tests/Concurrency/PerformanceSmokeTests.cs` checking submission acknowledgement p95 under 50 ms and successor claim within 100 ms of a predecessor finishing (R-008), gated behind an environment variable so a loaded CI machine cannot fail the suite on timing alone
-- [ ] T029 Run the full `tests/Concurrency` suite and confirm all seven required scenarios pass, the suite completes in under 60 seconds, and no test sleeps on a timeout (R-005, R-008)
-- [ ] T030 Reconcile artifacts with the finished code: re-read `specs/001-per-user-message-ordering/spec.md`, `plan.md`, and this file, update anything that diverged in the same commit as the divergence (Principle VII), and confirm no secret material is present in tracked files or captured log output and that `dotnet build` is warning-free under `TreatWarningsAsErrors` (Quality Gate 8)
+- [X] T027 Add `tests/Concurrency/LoggingPolicyTests.cs` capturing log output across a full message lifecycle and asserting the submitted content string never appears at any level (FR-021). If it fails, fix the offending call sites in `src/Middleware/` and `src/LLM.FakeProvider/` in a separate follow-up commit
+- [X] T028 [P] Add `tests/Concurrency/PerformanceSmokeTests.cs` checking submission acknowledgement p95 under 50 ms and successor claim within 100 ms of a predecessor finishing (R-008), gated behind an environment variable so a loaded CI machine cannot fail the suite on timing alone
+- [X] T029 Run the full `tests/Concurrency` suite and confirm all seven required scenarios pass, the suite completes in under 60 seconds, and no test sleeps on a timeout (R-005, R-008)
+- [X] T030 Reconcile artifacts with the finished code: re-read `specs/001-per-user-message-ordering/spec.md`, `plan.md`, and this file, update anything that diverged in the same commit as the divergence (Principle VII), and confirm no secret material is present in tracked files or captured log output and that `dotnet build` is warning-free under `TreatWarningsAsErrors` (Quality Gate 8)
 
 ---
 

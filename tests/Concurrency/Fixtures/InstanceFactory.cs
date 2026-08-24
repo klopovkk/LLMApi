@@ -17,7 +17,7 @@ namespace Concurrency.Fixtures;
 /// the whole property under test, so the tests need nothing heavier than this to be honest about
 /// two instances (R-010).
 /// </summary>
-public sealed class InstanceFactory : WebApplicationFactory<Program>
+public class InstanceFactory : WebApplicationFactory<Program>
 {
     private readonly Dictionary<string, string?> _settings;
     private readonly FakeTimeProvider? _timeProvider;

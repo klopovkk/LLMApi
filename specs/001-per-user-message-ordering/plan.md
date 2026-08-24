@@ -186,6 +186,36 @@ under `src/Middleware` except `Program.cs` may name a concrete provider — the 
 to, since an executable must compose something. That narrower rule is enforced by `BoundaryTests`
 rather than by the compiler, which cannot express "this one file may".
 
+## Post-implementation review
+
+Implemented 2026-08-24. Constitution check re-run against the finished code: still **PASS**. The
+suite is 64 passing plus 2 gated performance tests, in 32 seconds; all seven required scenarios pass
+and Quality Gates 1–6 were demonstrated against two containers (see `quickstart.md`).
+
+Four things the design got wrong, each found by a test or by the manual walkthrough rather than by
+review. They are recorded here because the corrections are the part worth keeping:
+
+1. **The claim was not actually atomic** (`data-model.md` statement 2). Under `READ COMMITTED`,
+   EvalPlanQual re-reads the target row's own columns but does *not* re-evaluate subqueries in the
+   qualification. The `NOT EXISTS` guard therefore stayed true for every blocked caller, and 99 of
+   100 contended rounds produced two or more winners. The partial unique index could not catch it,
+   because updating one row repeatedly never creates a second `Processing` row. Fixed by adding
+   `AND state = 'Pending'` on the target row.
+2. **Completion destroyed the evidence FIFO is asserted from.** Statement 3 cleared `claimed_at`, so
+   by the time a message was `Completed` there was no record of when it had started — and SC-002 is
+   defined in terms of exactly that. `claimed_at` is now retained.
+3. **The two contract documents disagreed** about the callback body: `openapi.yaml` specified a
+   status string, `llm-boundary.md` implied `LlmCompletion`'s boolean. The wire contract won and the
+   provider maps at the edge.
+4. **The compiler could not enforce the Principle IV boundary** (R-012). A composition root has to
+   name a concrete implementation to register it, so `Program.cs` cannot compile without the
+   reference. `BoundaryTests` enforces the narrower true rule instead — no file under
+   `src/Middleware` except `Program.cs` may name a provider — and also asserts the abstraction
+   assembly still has no dependencies of its own.
+
+The first two are the ones that justify R-010's insistence on a real PostgreSQL in the test suite. A
+substitute would have reported both designs as correct.
+
 ## Required artifact corrections
 
 Both raised by this plan under Principle VII, both now resolved:
