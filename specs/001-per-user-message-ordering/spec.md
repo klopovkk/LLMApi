@@ -8,6 +8,16 @@
 
 **Input**: User description: "FR-001 accept multiple messages from the same user without client-side synchronization; FR-002 same-user messages begin processing in acceptance order; FR-003 at most one message per user in active LLM processing; FR-004 different users processed concurrently; FR-005 LLM completion communicated via HTTP callback; FR-006 callback routable to any instance and completes the message regardless of which instance submitted it; FR-007 ordering and exclusivity preserved across concurrent instances; FR-008 processing state persisted so coordination does not depend on in-memory application state. Non-functional: .NET 9+, at least two application instances, local execution via Docker Compose, no real LLM integration, no separate LLM stub service, no authentication required."
 
+## Clarifications
+
+### Session 2026-08-24
+
+- Q: When a client retries a submission it never got a response for, should the middleware treat it as a second message for that user, or recognize it as the same one? → A: No de-duplication — every accepted submission becomes a distinct message, even when it is a retry of identical content.
+- Q: Should the completion callback endpoint verify anything about who is calling it before it completes a message? → A: Nothing at all — the endpoint accepts any well-formed callback for any existing message identifier, and identifiers need not be unguessable. Authentication is out of scope for this feature.
+- Q: If the fake provider's callback cannot be delivered, should it retry the delivery or drop it? → A: Drop it — one delivery attempt only. An undelivered answer is lost, and the FR-013 claim expiry is the sole recovery path.
+- Q: When the shared store that holds message state is unreachable, what should the API do with an incoming submission? → A: Reject it with a retryable failure. Nothing is buffered in memory and no acknowledgement is issued while the store is unreachable.
+- Q: How long must a finished message stay retrievable before the system may remove it? → A: For the lifetime of the environment. The application never removes finished messages; a freshly composed environment starts empty.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Send messages without coordinating on the client (Priority: P1)
@@ -113,9 +123,10 @@ twice.
 
 ### Edge Cases
 
-- **Duplicate callback**: the same completion callback is delivered twice, by retry or by
-  delivery to both instances. The message must be completed exactly once and the user's queue
-  must advance exactly once.
+- **Duplicate callback**: the same completion callback is delivered twice. Because the substituted
+  provider never retries (FR-019a), this arises from an outside caller repeating the request rather
+  than from the provider itself, but the handling requirement is the same: the message is completed
+  exactly once and the user's queue advances exactly once.
 - **Unknown or already-final callback**: a callback references a message that does not exist, or
   one that is already completed or failed. It must be answered without altering existing state,
   and must never release another message's or another user's turn.
@@ -133,10 +144,16 @@ twice.
   message is active for that user by then (FR-013b).
 - **Empty or malformed submission**: a submission missing a user identifier or message content is
   rejected at acceptance and never enters a user's queue.
+- **Retried submission**: a client resends a submission whose response it never received. Both
+  submissions are accepted as separate messages and both are answered in acceptance order
+  (FR-009a); the client is responsible for reconciling the two identifiers if it cares.
 - **Deep queue**: a user accumulates many waiting messages. Acceptance keeps succeeding, ordering
   stays correct as the queue grows, and no waiting message is starved.
 - **Callback racing the acknowledgement**: a callback arrives before the acceptance response has
   reached the client. It must still be handled correctly.
+- **Shared store unreachable**: submissions, status reads, and callbacks fail with a retryable
+  response for as long as the store is unavailable; nothing is accepted or held locally (FR-022,
+  FR-022a), and service resumes by itself once the store returns (FR-022b).
 - **Simultaneous first arrivals on both instances**: a user with nothing in progress has messages
   accepted by both instances at the same moment. Exactly one may begin immediately; the other
   waits.
@@ -167,6 +184,9 @@ from the edge cases above.
   affinity to a particular instance.
 - **FR-009**: The system MUST acknowledge each accepted submission with an identifier that
   uniquely and durably identifies that message.
+- **FR-009a**: The system MUST treat every accepted submission as a distinct message, including a
+  submission that repeats the content of an earlier one. The system MUST NOT de-duplicate
+  submissions, and MUST NOT require an idempotency key.
 - **FR-010**: The system MUST let a client retrieve, for a given message identifier, whether the
   message is waiting, being answered, or final, along with the answer or failure reason once it is
   final.
@@ -199,10 +219,29 @@ from the edge cases above.
 - **FR-019**: The system MUST place language-model interaction behind a substitutable boundary so
   that all ordering, exclusivity, and callback behaviour can be exercised without a real
   language-model provider and without a separately deployed stub service.
+- **FR-019a**: The substituted language-model boundary MUST attempt callback delivery exactly once
+  and MUST NOT retry a failed delivery. An answer that cannot be delivered is lost, and the message
+  is resolved by claim expiry (FR-013) rather than by a later delivery attempt.
 - **FR-020**: The system MUST NOT require authentication or authorization for submission, status
   retrieval, or callback delivery.
+- **FR-020a**: The callback endpoint MUST NOT verify anything about its caller. Any well-formed
+  callback naming an existing message is honoured, and message identifiers carry no requirement to
+  be unguessable. No shared secret, signature, or credential is part of this feature.
 - **FR-021**: The system MUST NOT record message content at informational severity or below, and
   MUST NOT place secret material in tracked configuration files.
+- **FR-022**: When the shared store is unreachable, the system MUST fail the affected operation
+  with a response indicating the failure is transient and the request may be retried. It MUST NOT
+  acknowledge a submission it could not persist.
+- **FR-022a**: The system MUST NOT buffer, queue, or otherwise hold accepted work in process
+  memory while the shared store is unavailable. No ordering or exclusivity decision may be made
+  from local state.
+- **FR-022b**: Once the shared store becomes reachable again, the system MUST resume normal
+  operation without operator intervention, with no message lost, duplicated, or left in a state
+  inconsistent with what was acknowledged to clients.
+- **FR-023**: The system MUST keep every message and its final answer or failure reason
+  retrievable for as long as the environment lives. The application MUST NOT remove, expire, or
+  archive finished messages, so a message identifier that was ever acknowledged remains resolvable
+  for the rest of that environment's life.
 
 ### Key Entities
 
@@ -253,12 +292,21 @@ from the edge cases above.
   claimed it was terminated — so no single stalled message blocks its user permanently.
 - **SC-012**: A callback arriving after its message has expired leaves that message failed and
   leaves the user's currently active message untouched, in 100% of cases.
+- **SC-013**: While the shared store is unreachable, 100% of submissions are refused with a
+  retryable response and none are acknowledged; after the store returns, every message
+  acknowledged before the outage is still present exactly once and in its original order, and no
+  message exists that was never acknowledged.
 
 ## Assumptions
 
 - The client supplies the user identifier with each submission. Because no authentication is
   required, the system trusts that identifier as the ordering and exclusivity key rather than
   deriving it from a verified principal.
+- Every caller is trusted. The target environment is a locally composed deployment used to
+  demonstrate distributed coordination, so reaching any endpoint — submission, status, or callback
+  — is itself taken as sufficient authorization (FR-020, FR-020a). Nothing in this feature should
+  be read as a statement about how the endpoints would be protected if exposed beyond that
+  environment.
 - Submission is acknowledged before an answer exists, and the client retrieves the answer
   afterwards by asking about the message identifier. No push channel to the client — webhook,
   streaming, or long-polling — is in scope.
@@ -282,6 +330,10 @@ from the edge cases above.
 - The substituted language-model boundary lives inside the application rather than as its own
   deployed service, and it can produce an out-of-band completion callback so that the callback
   path is exercised the way a real provider would exercise it.
+- Callback delivery is at-most-once (FR-019a). A lost callback is therefore indistinguishable from
+  a provider that never answered, which makes claim expiry the single recovery mechanism in the
+  system rather than one of two — so the expiry behaviour carries more weight here than it would
+  alongside a retrying provider, and SC-011 is a primary rather than incidental criterion.
 - Shared infrastructure for durable state and coordination runs locally under Docker Compose
   alongside at least two application instances, and that composed environment is the target for
   demonstrating multi-instance behaviour.
@@ -290,3 +342,7 @@ from the edge cases above.
 - How many distinct users are processed concurrently is an operational tuning concern, not a
   correctness requirement; the requirement is only that users are not serialized against one
   another.
+- Stored data grows monotonically for the life of an environment (FR-023). This is acceptable
+  because an environment is a local composed deployment with a demonstration-scale workload, and
+  it is reset by recreating the environment rather than by an application-level cleanup routine.
+  No retention policy, archival step, or purge operation is in scope.
