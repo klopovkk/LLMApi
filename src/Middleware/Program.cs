@@ -3,6 +3,7 @@ using LLM.FakeProvider;
 using Middleware.Api;
 using Middleware.Configuration;
 using Middleware.Messages;
+using Middleware.Processing;
 using Middleware.Schema;
 using Npgsql;
 
@@ -38,6 +39,7 @@ builder.Services.AddSingleton(_ =>
 builder.Services.AddSingleton<SchemaInitializer>();
 builder.Services.AddSingleton<MessageStore>();
 builder.Services.AddSingleton<MessageDispatcher>();
+builder.Services.AddHostedService<ProcessingSweeper>();
 
 // The composition root is the only place that knows a concrete provider exists; everything else
 // sees ILlmClient (Principle IV).

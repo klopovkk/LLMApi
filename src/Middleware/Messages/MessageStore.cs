@@ -207,6 +207,42 @@ public sealed class MessageStore(
     }
 
     /// <summary>
+    /// Sweeper support: users who have work waiting and nothing active.
+    ///
+    /// Both instances running this concurrently is safe and expected — the claim decides the
+    /// winner, so the sweeper needs no leader election and no coordination of its own. That is the
+    /// property that lets an instance disappear without anything having to notice.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> FindUsersWithPendingWorkAsync(
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT DISTINCT p.user_id
+              FROM messages p
+             WHERE p.state = 'Pending'
+               AND NOT EXISTS (
+                     SELECT 1 FROM messages a
+                      WHERE a.user_id = p.user_id
+                        AND a.state   = 'Processing'
+                   )
+             LIMIT @batchSize;
+            """;
+
+        await using var command = dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue("batchSize", batchSize);
+
+        var users = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            users.Add(reader.GetString(0));
+        }
+
+        return users;
+    }
+
+    /// <summary>
     /// Statement 5. Content is not selected: the status response does not echo it (FR-021).
     /// </summary>
     public async Task<Message?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
