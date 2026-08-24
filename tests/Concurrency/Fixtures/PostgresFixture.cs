@@ -20,7 +20,14 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public string ConnectionString => _container.GetConnectionString();
 
-    public Task InitializeAsync() => _container.StartAsync();
+    public async Task InitializeAsync()
+    {
+        await _container.StartAsync();
+
+        // Published so helpers that need to read columns the status contract deliberately omits —
+        // claimed_by, for instance — can reach the store directly.
+        TestConnectionString.Value = ConnectionString;
+    }
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
 }
