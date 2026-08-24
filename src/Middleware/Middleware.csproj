@@ -22,6 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Schema\schema.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Concurrency" />
   </ItemGroup>
 
