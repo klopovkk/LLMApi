@@ -38,8 +38,10 @@ public sealed class StoreProxy : IAsyncDisposable
             Timeout = 2,
             CommandTimeout = 2,
             // Pooled connections would otherwise survive the outage as stale handles and confuse
-            // what the test is measuring.
+            // what the test is measuring. The pruning interval has to come down with the idle
+            // lifetime; Npgsql rejects an idle lifetime below it.
             ConnectionIdleLifetime = 1,
+            ConnectionPruningInterval = 1,
         }.ConnectionString;
     }
 

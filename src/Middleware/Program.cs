@@ -52,6 +52,8 @@ var app = builder.Build();
 // tells those two situations apart.
 await ApplySchemaAsync(app);
 
+app.UseStoreUnavailableHandling();
+
 app.MapHealthEndpoints();
 app.MapMessageEndpoints();
 app.MapCallbackEndpoints();
@@ -64,7 +66,7 @@ static async Task ApplySchemaAsync(WebApplication app)
 
     try
     {
-        await app.Services.GetRequiredService<SchemaInitializer>().ApplyAsync(CancellationToken.None);
+        await app.Services.GetRequiredService<SchemaInitializer>().EnsureAppliedAsync(CancellationToken.None);
         logger.LogInformation("Schema applied.");
     }
     catch (Exception ex) when (ex is NpgsqlException or TimeoutException)

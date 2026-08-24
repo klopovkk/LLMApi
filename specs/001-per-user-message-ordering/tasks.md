@@ -176,7 +176,7 @@ locally, and service resumes unattended.
 nothing was accepted during the outage and nothing phantom appears afterwards.
 
 - [X] T023 Write the failing tests in `tests/Concurrency/StoreUnavailableTests.cs`: with the store unreachable, `POST /messages` returns 503 with retryable problem details and issues no identifier, `GET /messages/{id}` returns 503, and `/health` reports `storeReachable: false` (FR-022, SC-013); nothing is buffered in process memory during the outage and no phantom message appears after the store returns (FR-022a); pending work resumes unattended once it does (FR-022b); and no 503 body ever contains message content
-- [ ] T024 Make T023 pass: map `NpgsqlException` connection failures to 503 problem details in `src/Middleware/Api/MessageEndpoints.cs`, `src/Middleware/Api/CallbackEndpoints.cs`, and `src/Middleware/Api/HealthEndpoints.cs`, and make `ProcessingSweeper` in `src/Middleware/Processing/ProcessingSweeper.cs` survive an outage — log at Error, never crash the host, resume on the next interval
+- [X] T024 Make T023 pass: map `NpgsqlException` connection failures to 503 problem details in `src/Middleware/Api/MessageEndpoints.cs`, `src/Middleware/Api/CallbackEndpoints.cs`, and `src/Middleware/Api/HealthEndpoints.cs`, and make `ProcessingSweeper` in `src/Middleware/Processing/ProcessingSweeper.cs` survive an outage — log at Error, never crash the host, resume on the next interval
 
 **Checkpoint**: All seven required scenarios pass. `tests/Concurrency` matches what `CLAUDE.md` claims it contains.
 

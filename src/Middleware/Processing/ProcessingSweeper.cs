@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Middleware.Configuration;
 using Middleware.Messages;
+using Middleware.Schema;
 using Npgsql;
 
 namespace Middleware.Processing;
@@ -17,6 +18,7 @@ namespace Middleware.Processing;
 /// </summary>
 public sealed class ProcessingSweeper(
     MessageStore store,
+    SchemaInitializer schema,
     MessageDispatcher dispatcher,
     IOptions<ProcessingOptions> options,
     ILogger<ProcessingSweeper> logger) : BackgroundService
@@ -66,6 +68,10 @@ public sealed class ProcessingSweeper(
 
     private async Task SweepAsync(CancellationToken cancellationToken)
     {
+        // Cheap once it has succeeded, and the reason an instance that booted during an outage
+        // recovers by itself rather than needing a restart (FR-022b).
+        await schema.EnsureAppliedAsync(cancellationToken);
+
         // Expiry first. A released queue found in this pass is picked up by the same pass rather
         // than waiting another interval, and the returned users feed straight into the pickup
         // below without a second query.

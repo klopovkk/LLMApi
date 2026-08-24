@@ -20,6 +20,24 @@ public sealed class SchemaInitializer(NpgsqlDataSource dataSource)
     /// <summary>Arbitrary but fixed: every instance must contend for the same lock key.</summary>
     private const long AdvisoryLockKey = 4919283746501L;
 
+    private volatile bool _applied;
+
+    /// <summary>
+    /// Applies the schema unless it already has been.
+    ///
+    /// Needed because startup is best-effort: an instance that boots while the store is
+    /// unreachable never gets to apply the schema, and FR-022b says it must become useful when
+    /// the store returns without anyone restarting it. The sweeper calls this each pass, so
+    /// recovery is unattended. Once applied it is a field read, not a query.
+    /// </summary>
+    public async Task EnsureAppliedAsync(CancellationToken cancellationToken)
+    {
+        if (_applied) return;
+
+        await ApplyAsync(cancellationToken);
+        _applied = true;
+    }
+
     public async Task ApplyAsync(CancellationToken cancellationToken)
     {
         var script = ReadScript();

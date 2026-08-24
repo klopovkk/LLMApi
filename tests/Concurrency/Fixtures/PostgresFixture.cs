@@ -1,3 +1,5 @@
+using Middleware.Schema;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -27,6 +29,14 @@ public sealed class PostgresFixture : IAsyncLifetime
         // Published so helpers that need to read columns the status contract deliberately omits —
         // claimed_by, for instance — can reach the store directly.
         TestConnectionString.Value = ConnectionString;
+
+        // Apply the schema once up front, using the production initializer. Without this, a test
+        // that queries the store directly depends on some other test having started an instance
+        // first, which is an ordering dependency masquerading as a passing suite. Applying it here
+        // costs nothing and does not weaken FoundationTests, which asserts that applying it
+        // concurrently is safe and idempotent — including when it has already been applied.
+        await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+        await new SchemaInitializer(dataSource).ApplyAsync(CancellationToken.None);
     }
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
