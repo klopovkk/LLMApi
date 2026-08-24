@@ -339,5 +339,16 @@ enforced by the compiler rather than by convention.
   then be a naming convention, and nothing would stop the middleware referencing the fake provider
   directly.
 
+**Correction made during implementation**: this entry originally claimed the boundary would be
+enforced by assembly references alone — `src/Middleware` referencing `LLM.Abstraction` and never
+`LLM.FakeProvider`. That does not survive contact with a composition root: an executable has to
+name a concrete implementation in order to register it in the container, so `Program.cs` cannot
+compile without the reference. The rule that actually matters is narrower — *no file under
+`src/Middleware` except `Program.cs` may mention a concrete provider* — and the compiler cannot
+express "this one file may". It is enforced instead by `BoundaryTests`, which scans the middleware
+sources and also asserts the abstraction assembly still has no dependencies of its own. The
+alternative, a fourth project existing only to compose the other three, was rejected under
+Principle VI: it buys a compiler check at the cost of a project whose whole content is one file.
+
 **Target framework**: the existing project targets `net10.0` and the installed SDK is 10.0.302,
 which satisfies the ".NET 9 or newer" constraint. Keep `net10.0` for every project.

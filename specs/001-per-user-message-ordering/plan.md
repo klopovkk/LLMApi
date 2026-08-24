@@ -71,9 +71,9 @@ Constitution version 1.0.0, ratified 2026-08-24.
 | I. Distributed Correctness First | PASS | Ordering comes from a database sequence and exclusivity from a database index. No guarantee is derived from process memory, a `lock` statement, or which instance a request reached. |
 | II. Explicit State and Ownership | PASS | One `state` column with four explicit values, plus `claimed_at`, `sequence`, and timestamps. "Which message is active for this user" and "may the next one start" are both single queries. |
 | III. Atomic Coordination | PASS | Claiming is one conditional `UPDATE` guarded by a partial unique index. Two instances cannot both win; the loser gets a unique violation, not a silent success. Expiry uses the same shape. |
-| IV. Asynchronous LLM Boundary | PASS | `ILlmClient` in a separate assembly with no provider dependency. Submission returns immediately; no transaction, lock, or request is held across the wait. Completion arrives as an inbound HTTP callback handled independently of the submitting request. |
+| IV. Asynchronous LLM Boundary | PASS | `ILlmClient` in a separate dependency-free assembly; only the composition root names a provider, guarded by `BoundaryTests`. Submission returns immediately; no transaction, lock, or request is held across the wait. Completion arrives as an inbound HTTP callback handled independently of the submitting request. |
 | V. Test-First and Testable Architecture | PASS (with obligations) | Tests run against real PostgreSQL, so the mechanism itself is under test. All five required scenarios are covered, plus two more the clarifications made necessary — see the gate note below. Every task in `tasks.md` must land its failing test in a separate commit before the implementation commit. |
-| VI. Simplicity and Scope | PASS | One store, one table, no ORM, no migration tool, no Redis, no load balancer, no metrics backend, no auth. Three source projects, and the third exists only because Principle IV requires the boundary to be compiler-enforced. |
+| VI. Simplicity and Scope | PASS | One store, one table, no ORM, no migration tool, no Redis, no load balancer, no metrics backend, no auth. Three source projects, and the third exists only because Principle IV requires the language-model integration to sit behind a substitutable boundary. |
 | VII. Traceability | PASS (with obligations) | Every decision in `research.md` is numbered and referenced from this plan. Two documentation corrections fall out of this plan and must ride with the code that causes them — see Required artifact corrections. |
 
 **Principle V gate note**: the constitution enumerates five required scenarios. The clarification
@@ -181,9 +181,10 @@ LLMApi.slnx                         # Updated to reference all four projects
 **Structure Decision**: The layout `CLAUDE.md` already prescribes, adopted as written (R-012). The
 existing `LLMApi.Api` scaffold is relocated to `src/Middleware` and `LLMApi.slnx` updated, so the
 documented commands (`dotnet run --project src/Middleware --urls=...`) are correct from the first
-commit rather than aspirational. `LLM.Abstraction` is its own assembly with no reference to
-`LLM.FakeProvider`, which is what stops the middleware reaching past the boundary Principle IV
-draws — the compiler enforces it instead of a review catching it.
+commit rather than aspirational. `LLM.Abstraction` is its own dependency-free assembly, and no file
+under `src/Middleware` except `Program.cs` may name a concrete provider — the composition root has
+to, since an executable must compose something. That narrower rule is enforced by `BoundaryTests`
+rather than by the compiler, which cannot express "this one file may".
 
 ## Required artifact corrections
 

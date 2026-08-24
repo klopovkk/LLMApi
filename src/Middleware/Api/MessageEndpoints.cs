@@ -20,6 +20,7 @@ public static class MessageEndpoints
     private static async Task<IResult> SubmitAsync(
         SubmitMessageRequest? request,
         MessageStore store,
+        MessageDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
         if (request is null
@@ -34,6 +35,12 @@ public static class MessageEndpoints
 
         var (id, sequence, acceptedAt) =
             await store.InsertAsync(request.UserId, request.Content, cancellationToken);
+
+        // Opportunistic: start this user's next message now rather than waiting for a sweep. It
+        // may claim a different message than the one just accepted — whichever is oldest — and it
+        // may claim nothing at all if the user is already busy. Both are correct; the sweeper is
+        // the safety net that guarantees the work is eventually picked up either way.
+        await dispatcher.TryStartNextAsync(request.UserId, cancellationToken);
 
         return Results.Accepted(
             $"/messages/{id}",

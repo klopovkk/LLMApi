@@ -17,8 +17,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Principle IV boundary: the middleware sees the abstraction and never a provider. -->
+    <!--
+      The Principle IV boundary. Middleware logic depends on the abstraction alone.
+
+      LLM.FakeProvider is referenced because a composition root has to name a concrete
+      implementation to register it — an executable must compose something. The rule that matters
+      is therefore narrower than "no reference": no file under src/Middleware except Program.cs may
+      mention LLM.FakeProvider. That is enforced by BoundaryTests rather than by the compiler,
+      because the compiler cannot express "this one file may".
+    -->
     <ProjectReference Include="..\LLM.Abstraction\LLM.Abstraction.csproj" />
+    <ProjectReference Include="..\LLM.FakeProvider\LLM.FakeProvider.csproj" />
   </ItemGroup>
 
   <ItemGroup>

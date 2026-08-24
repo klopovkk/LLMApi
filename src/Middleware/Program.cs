@@ -1,3 +1,5 @@
+using LLM.Abstraction;
+using LLM.FakeProvider;
 using Middleware.Api;
 using Middleware.Configuration;
 using Middleware.Messages;
@@ -8,6 +10,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<ProcessingOptions>(
     builder.Configuration.GetSection(ProcessingOptions.SectionName));
+
+builder.Services.Configure<FakeProviderOptions>(
+    builder.Configuration.GetSection(FakeProviderOptions.SectionName));
+
+// Where this instance asks the provider to post completions. In the composed environment each
+// instance is given its peer's address, so every callback crosses a process boundary (R-011).
+builder.Services.Configure<FakeProviderCallbackOptions>(callbacks =>
+{
+    var baseUri = builder.Configuration[$"{FakeProviderOptions.SectionName}:CallbackBaseUri"]
+        ?? "http://localhost";
+    callbacks.CallbackUri = new Uri(new Uri(baseUri), "/callbacks/llm");
+});
 
 builder.Services.AddSingleton(TimeProvider.System);
 
@@ -23,6 +37,11 @@ builder.Services.AddSingleton(_ =>
 
 builder.Services.AddSingleton<SchemaInitializer>();
 builder.Services.AddSingleton<MessageStore>();
+builder.Services.AddSingleton<MessageDispatcher>();
+
+// The composition root is the only place that knows a concrete provider exists; everything else
+// sees ILlmClient (Principle IV).
+builder.Services.AddHttpClient<ILlmClient, FakeLlmClient>();
 
 var app = builder.Build();
 
