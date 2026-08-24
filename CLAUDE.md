@@ -16,8 +16,6 @@ the constitution is amended.
 - `src/LLM.Abstraction` — LLM boundary (Principle IV)
 - `src/LLM.FakeProvider` — test double for the LLM (used per Principle V)
 - `tests/Concurrency` — the five required scenario tests
-- `docker-compose.yml` — Postgres/Redis for shared state
-
 ## Commands
 
 - Build: `dotnet build`
