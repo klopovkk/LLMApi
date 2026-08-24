@@ -13,8 +13,9 @@ namespace Concurrency.Contracts;
 public sealed class GetMessageTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Reports_the_state_of_an_accepted_message()
+    public async Task GetMessage_MessageWasAccepted_ReturnsItsStateAndTimestamps()
     {
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -24,8 +25,10 @@ public sealed class GetMessageTests(PostgresFixture postgres)
         var accepted = await submission.Content.ReadFromJsonAsync<JsonElement>();
         var messageId = accepted.GetProperty("messageId").GetGuid();
 
+        // Act
         var response = await client.GetAsync($"/messages/{messageId}");
 
+        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -41,10 +44,11 @@ public sealed class GetMessageTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Never_echoes_the_submitted_content()
+    public async Task GetMessage_AnyMessage_NeverEchoesTheSubmittedContent()
     {
         // Content must not travel any further than it has to. The read path has no reason to
         // carry it, and not carrying it removes a way for it to reach a log (FR-021).
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         const string secret = "correct-horse-battery-staple";
@@ -54,19 +58,24 @@ public sealed class GetMessageTests(PostgresFixture postgres)
         var messageId = (await submission.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("messageId").GetGuid();
 
+        // Act
         var raw = await client.GetStringAsync($"/messages/{messageId}");
 
+        // Assert
         Assert.DoesNotContain(secret, raw, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Returns_404_for_an_unknown_identifier()
+    public async Task GetMessage_UnknownMessageId_ReturnsNotFound()
     {
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.GetAsync($"/messages/{Guid.NewGuid()}");
 
+        // Assert
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 

@@ -18,8 +18,10 @@ public sealed class ClaimRaceAcrossInstancesTests(PostgresFixture postgres)
     private const int Rounds = 100;
 
     [Fact]
-    public async Task Two_instances_racing_for_one_message_produce_exactly_one_winner()
+    public async Task TryClaimNextAsync_TwoInstancesRacingForOneMessage_ExactlyOneWins()
     {
+        // Not AAA: 100 rounds each arrange a fresh message and act on it from both instances, and
+        // only the totals are asserted afterwards. A single round proves nothing about a race.
         await using var one = new InstanceFactory(
             postgres.ConnectionString, "race-1", fakeProviderMode: "NeverRespond",
             sweepInterval: TimeSpan.FromMinutes(5));

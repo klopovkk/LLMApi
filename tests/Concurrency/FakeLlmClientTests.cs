@@ -16,18 +16,21 @@ namespace Concurrency;
 public sealed class FakeLlmClientTests
 {
     [Fact]
-    public async Task Submit_returns_before_the_answer_exists()
+    public async Task SubmitAsync_ProviderHasADelay_ReturnsBeforeTheAnswerExists()
     {
         // Principle IV: the caller is not waiting. If SubmitAsync blocked for the delay, provider
         // latency would become request latency and the middleware would be holding a request open
         // across the wait.
+        // Arrange
         using var recorder = new CallbackRecorder();
         var client = NewClient(recorder, delay: TimeSpan.FromMilliseconds(400));
 
+        // Act
         var stopwatch = Stopwatch.StartNew();
         await client.SubmitAsync(NewSubmission(recorder), CancellationToken.None);
         stopwatch.Stop();
 
+        // Assert
         Assert.True(
             stopwatch.ElapsedMilliseconds < 200,
             $"SubmitAsync blocked for {stopwatch.ElapsedMilliseconds} ms; it must return promptly.");
@@ -35,16 +38,19 @@ public sealed class FakeLlmClientTests
     }
 
     [Fact]
-    public async Task Posts_exactly_one_completion_over_http()
+    public async Task SubmitAsync_ModeIsRespond_PostsExactlyOneCompletionOverHttp()
     {
+        // Arrange
         using var recorder = new CallbackRecorder();
         var client = NewClient(recorder, delay: TimeSpan.FromMilliseconds(20));
         var submission = NewSubmission(recorder);
 
+        // Act
         await client.SubmitAsync(submission, CancellationToken.None);
         await recorder.WaitForAsync(1, TimeSpan.FromSeconds(5));
         await Task.Delay(200);
 
+        // Assert
         var completion = Assert.Single(recorder.Received);
         Assert.Equal(submission.MessageId, completion.MessageId);
         Assert.True(completion.Succeeded);
@@ -52,58 +58,70 @@ public sealed class FakeLlmClientTests
     }
 
     [Fact]
-    public async Task The_answer_is_derived_from_the_identifier_and_never_from_the_content()
+    public async Task SubmitAsync_ModeIsRespond_DerivesTheAnswerFromTheIdentifierNotTheContent()
     {
         // Nothing that must stay out of logs may come back by way of an echoed answer.
+        // Arrange
         using var recorder = new CallbackRecorder();
         var client = NewClient(recorder, delay: TimeSpan.FromMilliseconds(20));
         const string secret = "correct-horse-battery-staple";
 
+        // Act
         await client.SubmitAsync(
             new LlmSubmission(Guid.NewGuid(), "user", secret, recorder.CallbackUri),
             CancellationToken.None);
         await recorder.WaitForAsync(1, TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.DoesNotContain(secret, recorder.Received[0].Answer ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Fail_mode_reports_a_provider_failure()
+    public async Task SubmitAsync_ModeIsFail_ReportsAProviderFailure()
     {
+        // Arrange
         using var recorder = new CallbackRecorder();
         var client = NewClient(recorder, delay: TimeSpan.FromMilliseconds(20), mode: FakeProviderMode.Fail);
 
+        // Act
         await client.SubmitAsync(NewSubmission(recorder), CancellationToken.None);
         await recorder.WaitForAsync(1, TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.False(recorder.Received[0].Succeeded);
         Assert.False(string.IsNullOrWhiteSpace(recorder.Received[0].Error));
     }
 
     [Fact]
-    public async Task NeverRespond_posts_nothing()
+    public async Task SubmitAsync_ModeIsNeverRespond_PostsNothing()
     {
+        // Arrange
         using var recorder = new CallbackRecorder();
         var client = NewClient(recorder, delay: TimeSpan.FromMilliseconds(20), mode: FakeProviderMode.NeverRespond);
 
+        // Act
         await client.SubmitAsync(NewSubmission(recorder), CancellationToken.None);
         await Task.Delay(400);
 
+        // Assert
         Assert.Empty(recorder.Received);
     }
 
     [Fact]
-    public async Task A_refused_delivery_is_dropped_and_never_retried()
+    public async Task SubmitAsync_CallbackDeliveryRefused_DropsItAfterOneAttempt()
     {
         // FR-019a: at-most-once. A lost answer is indistinguishable from a provider that never
         // answered, which is what makes claim expiry the single recovery mechanism.
+        // Arrange
         using var recorder = new CallbackRecorder();
         recorder.Refuse = true;
         var client = NewClient(recorder, delay: TimeSpan.FromMilliseconds(20));
 
+        // Act
         await client.SubmitAsync(NewSubmission(recorder), CancellationToken.None);
         await Task.Delay(600);
 
+        // Assert
         Assert.Equal(1, recorder.AttemptCount);
     }
 

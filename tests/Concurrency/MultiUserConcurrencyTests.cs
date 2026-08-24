@@ -16,10 +16,11 @@ namespace Concurrency;
 public sealed class MultiUserConcurrencyTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task A_held_user_delays_nobody_else()
+    public async Task SubmitMessage_OneUsersMessageHeldUnanswered_OtherUsersStillComplete()
     {
         // The held user's provider never answers, so their message sits in Processing for the
         // whole test. Everyone else must sail past.
+        // Arrange
         await using var held = new InstanceFactory(
             postgres.ConnectionString, "held", fakeProviderMode: "NeverRespond");
         await using var others = new InstanceFactory(
@@ -35,12 +36,14 @@ public sealed class MultiUserConcurrencyTests(PostgresFixture postgres)
         var heldUser = $"held-{Guid.NewGuid():N}";
         var heldId = await SubmitAsync(heldClient, heldUser, "never answered");
 
+        // Act
         var otherIds = new List<Guid>();
         for (var i = 0; i < 10; i++)
         {
             otherIds.Add(await SubmitAsync(othersClient, $"other-{i}-{Guid.NewGuid():N}", $"quick {i}"));
         }
 
+        // Assert
         var finished = await SingleUserFifoTests.WaitForAllFinishedAsync(
             othersClient, otherIds, TimeSpan.FromSeconds(30));
 
@@ -51,11 +54,14 @@ public sealed class MultiUserConcurrencyTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Several_users_are_processed_at_the_same_moment()
+    public async Task SubmitMessage_EightDistinctUsers_AllProcessAtTheSameMoment()
     {
         // Proves parallelism rather than merely fast serialization: at some observed instant more
         // than one message must be Processing across distinct users. Per-user exclusivity still
         // holds, because each of these users has exactly one message.
+        // Not AAA: the store is sampled repeatedly while the users are being processed, because
+        // the claim is about a moment that occurs during the action. Reading once at the end would
+        // observe nothing, since every message is held open rather than finishing.
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "parallel",

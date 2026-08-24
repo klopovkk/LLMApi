@@ -17,13 +17,13 @@ namespace Concurrency;
 public sealed class RestartDurabilityTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task State_survives_an_instance_restart_intact()
+    public async Task InstanceRestart_MessagesWaitingAndInProgress_LeavesEveryMessageIntactExactlyOnce()
     {
         var userId = $"restart-{Guid.NewGuid():N}";
         var ids = new List<Guid>();
         List<(long Sequence, string State)> before;
 
-        // An instance accepts work and starts it, then dies.
+        // Arrange — an instance accepts work and starts it, then dies.
         await using (var first = NewInstance("restart-1"))
         {
             using var client = first.CreateClient();
@@ -36,10 +36,11 @@ public sealed class RestartDurabilityTests(PostgresFixture postgres)
             before = await ReadRowsAsync(userId);
         }
 
-        // A fresh instance comes up against the same store.
+        // Act — a fresh instance comes up against the same store.
         await using var second = NewInstance("restart-2");
         using var secondClient = second.CreateClient();
 
+        // Assert
         var after = await ReadRowsAsync(userId);
 
         Assert.Equal(before.Count, after.Count);
@@ -53,13 +54,14 @@ public sealed class RestartDurabilityTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Work_left_behind_by_a_dead_instance_is_resumed_by_the_survivor()
+    public async Task InstanceRestart_WorkLeftByADeadInstance_SurvivorKeepsProcessing()
     {
         // The message the dead instance had claimed stays claimed until expiry — that is FR-013's
         // job, not this one. What must happen here is that the *pending* messages behind it are
         // not stranded: the survivor's sweeper is responsible for them.
         var userId = $"resume-{Guid.NewGuid():N}";
 
+        // Arrange
         await using (var dying = NewInstance("dying"))
         {
             using var client = dying.CreateClient();
@@ -77,8 +79,10 @@ public sealed class RestartDurabilityTests(PostgresFixture postgres)
         survivor.CallbackTarget = survivor;
 
         using var survivorClient = survivor.CreateClient();
+        // Act
         var liveId = await SubmitAsync(survivorClient, liveUser, "processed after the restart");
 
+        // Assert
         var finished = await SingleUserFifoTests.WaitForAllFinishedAsync(
             survivorClient, new[] { liveId }, TimeSpan.FromSeconds(30));
 
@@ -86,12 +90,13 @@ public sealed class RestartDurabilityTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task A_restarted_instance_does_not_reapply_state_or_lose_history()
+    public async Task InstanceRestart_StoreAlreadyPopulated_ReappliesNothingAndLosesNoHistory()
     {
         // Starting an instance must be a no-op against an existing store: the schema is applied
         // idempotently and nothing is reconstructed from process memory.
         var userId = $"history-{Guid.NewGuid():N}";
 
+        // Arrange
         await using (var first = NewInstance("history-1"))
         {
             using var client = first.CreateClient();
@@ -102,9 +107,11 @@ public sealed class RestartDurabilityTests(PostgresFixture postgres)
                 new { messageId = id, status = "completed", answer = "answered before restart" });
         }
 
+        // Act
         await using var second = NewInstance("history-2");
         using var secondClient = second.CreateClient();
 
+        // Assert
         var rows = await ReadRowsAsync(userId);
         var row = Assert.Single(rows);
         Assert.Equal("Completed", row.State);

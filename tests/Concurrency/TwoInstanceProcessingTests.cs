@@ -15,8 +15,9 @@ namespace Concurrency;
 public sealed class TwoInstanceProcessingTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Acceptance_order_is_respected_when_two_instances_accept_for_one_user()
+    public async Task SubmitMessage_OneUsersStreamSplitAcrossTwoInstances_ProcessingStartsInAcceptanceOrder()
     {
+        // Arrange
         await using var one = NewInstance("instance-1");
         await using var two = NewInstance("instance-2");
         one.CallbackTarget = two;
@@ -26,7 +27,7 @@ public sealed class TwoInstanceProcessingTests(PostgresFixture postgres)
         using var clientTwo = two.CreateClient();
         var userId = $"two-inst-{Guid.NewGuid():N}";
 
-        // Alternate instances so the user's stream is split across both.
+        // Act — alternate instances so the user's stream is split across both.
         var ids = new List<Guid>();
         for (var i = 0; i < 12; i++)
         {
@@ -34,6 +35,7 @@ public sealed class TwoInstanceProcessingTests(PostgresFixture postgres)
             ids.Add(await SubmitAsync(client, userId, $"message {i}"));
         }
 
+        // Assert
         var finished = await SingleUserFifoTests.WaitForAllFinishedAsync(
             clientOne, ids, TimeSpan.FromSeconds(60));
         var ordered = finished.OrderBy(m => m.Sequence).ToArray();
@@ -49,8 +51,11 @@ public sealed class TwoInstanceProcessingTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Exclusivity_holds_while_both_instances_are_working_the_same_user()
+    public async Task SubmitMessage_BothInstancesWorkingTheSameUser_NeverTwoActiveAtOnce()
     {
+        // Not AAA: like the single-instance exclusivity test, the assertion is continuous. The
+        // store is sampled while both instances work the same user, because the claim is about
+        // every instant of the run rather than its end state.
         await using var one = NewInstance("excl-1", TimeSpan.FromMilliseconds(30));
         await using var two = NewInstance("excl-2", TimeSpan.FromMilliseconds(30));
         one.CallbackTarget = two;

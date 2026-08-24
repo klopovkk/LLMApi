@@ -16,11 +16,13 @@ namespace Concurrency;
 public sealed class BoundaryTests
 {
     [Fact]
-    public void Only_the_composition_root_names_a_concrete_provider()
+    public void MiddlewareSources_FileOtherThanCompositionRoot_DoesNotNameConcreteProvider()
     {
+        // Arrange
         var middleware = Path.Combine(RepositoryRoot(), "src", "Middleware");
         var offenders = new List<string>();
 
+        // Act
         foreach (var file in Directory.EnumerateFiles(middleware, "*.cs", SearchOption.AllDirectories))
         {
             if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
@@ -40,6 +42,7 @@ public sealed class BoundaryTests
             }
         }
 
+        // Assert
         Assert.True(
             offenders.Count == 0,
             "Only Program.cs may name a concrete provider. Offending files: "
@@ -47,12 +50,14 @@ public sealed class BoundaryTests
     }
 
     [Fact]
-    public void The_abstraction_assembly_has_no_dependencies_of_its_own()
+    public void AbstractionAssembly_Always_HasNoNonFrameworkDependencies()
     {
         // If the boundary assembly ever grows a dependency, both sides of the boundary can start
         // sharing types through it, and the separation stops meaning anything.
+        // Act
         var references = typeof(LLM.Abstraction.ILlmClient).Assembly.GetReferencedAssemblies();
 
+        // Assert
         var nonFramework = references
             .Select(r => r.Name!)
             .Where(name => !name.StartsWith("System", StringComparison.Ordinal)

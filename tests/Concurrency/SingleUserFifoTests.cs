@@ -16,8 +16,9 @@ namespace Concurrency;
 public sealed class SingleUserFifoTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Processing_starts_in_acceptance_order_for_one_user()
+    public async Task SubmitMessage_TwentyFiveMessagesForOneUser_ProcessingStartsInAcceptanceOrder()
     {
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "fifo",
@@ -26,6 +27,7 @@ public sealed class SingleUserFifoTests(PostgresFixture postgres)
         using var client = instance.CreateClient();
         var userId = $"fifo-{Guid.NewGuid():N}";
 
+        // Act
         const int count = 25;
         var ids = new List<Guid>();
         for (var i = 0; i < count; i++)
@@ -36,6 +38,7 @@ public sealed class SingleUserFifoTests(PostgresFixture postgres)
             ids.Add(body.GetProperty("messageId").GetGuid());
         }
 
+        // Assert
         var finished = await WaitForAllFinishedAsync(client, ids, TimeSpan.FromSeconds(30));
 
         var ordered = finished.OrderBy(m => m.Sequence).ToArray();
@@ -54,10 +57,11 @@ public sealed class SingleUserFifoTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Rapidly_submitted_messages_still_start_in_acceptance_order()
+    public async Task SubmitMessage_TwentyMessagesSubmittedConcurrently_ProcessingStartsInAcceptanceOrder()
     {
         // Submitted concurrently, so acceptance order is whatever the store assigned rather than
         // the order the client happened to write them in. FIFO is defined against that.
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "fifo-burst",
@@ -66,6 +70,7 @@ public sealed class SingleUserFifoTests(PostgresFixture postgres)
         using var client = instance.CreateClient();
         var userId = $"burst-{Guid.NewGuid():N}";
 
+        // Act
         var responses = await Task.WhenAll(Enumerable.Range(0, 20).Select(i =>
             client.PostAsJsonAsync("/messages", new { userId, content = $"burst {i}" })));
 
@@ -76,6 +81,7 @@ public sealed class SingleUserFifoTests(PostgresFixture postgres)
             ids.Add(body.GetProperty("messageId").GetGuid());
         }
 
+        // Assert
         var finished = await WaitForAllFinishedAsync(client, ids, TimeSpan.FromSeconds(30));
         var ordered = finished.OrderBy(m => m.Sequence).ToArray();
 

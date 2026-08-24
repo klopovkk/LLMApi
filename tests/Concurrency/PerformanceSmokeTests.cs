@@ -25,10 +25,11 @@ public sealed class PerformanceSmokeTests(PostgresFixture postgres)
         Environment.GetEnvironmentVariable("RUN_PERF_TESTS") is not (null or "" or "0" or "false");
 
     [SkippableFact]
-    public async Task Acceptance_stays_within_the_latency_target()
+    public async Task SubmitMessage_OneHundredSequentialSubmissions_P95StaysUnderFiftyMilliseconds()
     {
         Skip.IfNot(Enabled, "Set RUN_PERF_TESTS=1 to run performance smoke tests.");
 
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString, "perf-accept", fakeProviderMode: "NeverRespond");
         using var client = instance.CreateClient();
@@ -41,6 +42,7 @@ public sealed class PerformanceSmokeTests(PostgresFixture postgres)
                 new { userId = $"warm-{Guid.NewGuid():N}", content = "warmup" });
         }
 
+        // Act
         var samples = new List<double>();
         for (var i = 0; i < 100; i++)
         {
@@ -53,6 +55,7 @@ public sealed class PerformanceSmokeTests(PostgresFixture postgres)
             samples.Add(stopwatch.Elapsed.TotalMilliseconds);
         }
 
+        // Assert
         samples.Sort();
         var p95 = samples[(int)(samples.Count * 0.95)];
 
@@ -60,12 +63,13 @@ public sealed class PerformanceSmokeTests(PostgresFixture postgres)
     }
 
     [SkippableFact]
-    public async Task The_successor_starts_promptly_after_its_predecessor_finishes()
+    public async Task PostCallback_PredecessorCompletes_SuccessorStartsWithinOneHundredMilliseconds()
     {
         Skip.IfNot(Enabled, "Set RUN_PERF_TESTS=1 to run performance smoke tests.");
 
         // The one number that matters behaviourally: it is what a user experiences as "messages
         // are answered one after another" rather than "the queue is stuck".
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "perf-successor",
@@ -78,12 +82,14 @@ public sealed class PerformanceSmokeTests(PostgresFixture postgres)
         var second = await SubmitAsync(client, userId, "second");
         await WaitForStateAsync(client, first, "Processing");
 
+        // Act
         var stopwatch = Stopwatch.StartNew();
         await client.PostAsJsonAsync("/callbacks/llm",
             new { messageId = first, status = "completed", answer = "done" });
         await WaitForStateAsync(client, second, "Processing");
         stopwatch.Stop();
 
+        // Assert
         Assert.True(
             stopwatch.ElapsedMilliseconds < 100,
             $"The successor took {stopwatch.ElapsedMilliseconds} ms to start; the target is under "

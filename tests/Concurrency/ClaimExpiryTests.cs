@@ -22,8 +22,11 @@ public sealed class ClaimExpiryTests(PostgresFixture postgres)
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
-    public async Task A_message_that_is_never_answered_is_failed_and_the_queue_released()
+    public async Task ExpireStaleClaims_ClaimHeldPastTimeout_FailsMessageAndStartsSuccessor()
     {
+        // Not AAA: the claim is that the message expires *at* the bound and not before, so the
+        // clock is advanced twice with an assertion between. The negative assertion before the
+        // boundary is what separates a working timeout from code that fails everything at once.
         var time = NewClock();
         await using var instance = NewInstance(time, "expiry");
         using var client = instance.CreateClient();
@@ -54,11 +57,14 @@ public sealed class ClaimExpiryTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task An_expired_message_is_never_resubmitted()
+    public async Task ExpireStaleClaims_MessageAlreadyExpired_NeverResubmitsIt()
     {
         // FR-013a: expiry is final. No path returns a message to Pending, so each accepted message
         // is submitted at most once and an expired one is reported to the client as failed rather
         // than quietly retried.
+        // Not AAA: time is advanced, expiry asserted, then advanced much further to prove no
+        // later sweep resurrects the message. The second act only means something after the first
+        // assertion has established the message was already final.
         var time = NewClock();
         await using var instance = NewInstance(time, "no-resubmit");
         using var client = instance.CreateClient();
@@ -78,10 +84,12 @@ public sealed class ClaimExpiryTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task A_callback_arriving_after_expiry_changes_nothing()
+    public async Task PostCallback_ArrivesAfterExpiry_LeavesMessageFailedAndActiveMessageUntouched()
     {
         // FR-013b and SC-012: the late answer must not revive the expired message, and must not
         // disturb whichever message is active for that user by then.
+        // Arrange — submit two, let the first expire, so a late callback has something to fail
+        // against and a successor it must not disturb.
         var time = NewClock();
         await using var instance = NewInstance(time, "late-callback");
         using var client = instance.CreateClient();
@@ -95,10 +103,11 @@ public sealed class ClaimExpiryTests(PostgresFixture postgres)
         await WaitForStateAsync(client, first, "Failed");
         await WaitForStateAsync(client, second, "Processing");
 
-        // The answer finally turns up, far too late.
+        // Act — the answer finally turns up, far too late.
         var response = await client.PostAsJsonAsync("/callbacks/llm",
             new { messageId = first, status = "completed", answer = "too late" });
 
+        // Assert
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
         var stillFailed = await ReadAsync(client, first);
@@ -111,8 +120,9 @@ public sealed class ClaimExpiryTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Expiry_does_not_touch_messages_still_within_the_bound()
+    public async Task ExpireStaleClaims_ClaimStillWithinTimeout_LeavesMessageProcessing()
     {
+        // Arrange
         var time = NewClock();
         await using var instance = NewInstance(time, "within-bound");
         using var client = instance.CreateClient();
@@ -121,9 +131,11 @@ public sealed class ClaimExpiryTests(PostgresFixture postgres)
         var id = await SubmitAsync(client, userId, "still working");
         await WaitForStateAsync(client, id, "Processing");
 
+        // Act
         time.Advance(ClaimTimeout - TimeSpan.FromSeconds(5));
         await Task.Delay(300);
 
+        // Assert
         Assert.Equal("Processing", await StateAsync(client, id));
     }
 

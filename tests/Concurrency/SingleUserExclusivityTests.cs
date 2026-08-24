@@ -13,8 +13,11 @@ namespace Concurrency;
 public sealed class SingleUserExclusivityTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Never_two_active_messages_for_one_user()
+    public async Task SubmitMessage_FifteenMessagesForOneUser_NeverTwoActiveAtOnce()
     {
+        // Not AAA: the assertion is continuous rather than final. Exclusivity is a claim about
+        // every instant while the queue drains, so the store is sampled throughout the action and
+        // the verdict is over the whole window. A single reading afterwards would prove nothing.
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "exclusivity",
@@ -66,10 +69,11 @@ public sealed class SingleUserExclusivityTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task The_second_message_waits_until_the_first_reaches_a_final_state()
+    public async Task SubmitMessage_FirstMessageHeldUnanswered_SecondStaysPending()
     {
         // NeverRespond holds the first message open, so the second must sit in Pending
         // indefinitely rather than starting alongside it.
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "exclusivity-hold",
@@ -81,9 +85,11 @@ public sealed class SingleUserExclusivityTests(PostgresFixture postgres)
         var firstId = await SubmitAsync(client, userId, "first");
         var secondId = await SubmitAsync(client, userId, "second");
 
-        // Give the sweeper several passes: if exclusivity were broken, this is when it would show.
+        // Act — give the sweeper several passes: if exclusivity were broken, this is when it
+        // would show.
         await Task.Delay(500);
 
+        // Assert
         var snapshots = await SingleUserFifoTests.SnapshotAsync(client, new[] { firstId, secondId });
         var first = snapshots.Single(s => s.Id == firstId);
         var second = snapshots.Single(s => s.Id == secondId);

@@ -18,8 +18,9 @@ namespace Concurrency;
 public sealed class SweeperPickupTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Work_that_no_request_dispatched_is_picked_up_anyway()
+    public async Task Sweep_MessageInsertedWithNoDispatch_ClaimsItAnyway()
     {
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "sweeper",
@@ -30,15 +31,18 @@ public sealed class SweeperPickupTests(PostgresFixture postgres)
         using var client = instance.CreateClient();
         var store = instance.Services.GetRequiredService<MessageStore>();
 
+        // Act — inserted with no accept-path dispatch, so only a sweep can start it.
         var userId = $"orphan-{Guid.NewGuid():N}";
         var (id, _, _) = await store.InsertAsync(userId, "nobody dispatched me", CancellationToken.None);
 
+        // Assert — the wait is the assertion: it throws if no sweep ever claims the message.
         await WaitForStateAsync(store, id, MessageState.Processing, TimeSpan.FromSeconds(10));
     }
 
     [Fact]
-    public async Task Several_users_are_picked_up_in_the_same_sweep()
+    public async Task Sweep_SixUsersWithPendingWork_ClaimsForAllOfThem()
     {
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "sweeper-batch",
@@ -48,6 +52,7 @@ public sealed class SweeperPickupTests(PostgresFixture postgres)
         using var client = instance.CreateClient();
         var store = instance.Services.GetRequiredService<MessageStore>();
 
+        // Act
         var marker = Guid.NewGuid().ToString("N");
         var ids = new List<Guid>();
         for (var i = 0; i < 6; i++)
@@ -57,6 +62,7 @@ public sealed class SweeperPickupTests(PostgresFixture postgres)
             ids.Add(id);
         }
 
+        // Assert
         foreach (var id in ids)
         {
             await WaitForStateAsync(store, id, MessageState.Processing, TimeSpan.FromSeconds(15));
@@ -64,10 +70,12 @@ public sealed class SweeperPickupTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task The_sweeper_respects_exclusivity()
+    public async Task Sweep_TwoPendingMessagesForOneUser_ClaimsExactlyOne()
     {
         // Two pending messages for one user, neither dispatched. The sweeper must start exactly
         // one — it has no licence to ignore the invariant just because it found two.
+
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString,
             "sweeper-exclusive",
@@ -78,12 +86,14 @@ public sealed class SweeperPickupTests(PostgresFixture postgres)
         var store = instance.Services.GetRequiredService<MessageStore>();
         var userId = $"sweep-excl-{Guid.NewGuid():N}";
 
+        // Act
         var (first, _, _) = await store.InsertAsync(userId, "first", CancellationToken.None);
         await store.InsertAsync(userId, "second", CancellationToken.None);
 
         await WaitForStateAsync(store, first, MessageState.Processing, TimeSpan.FromSeconds(10));
         await Task.Delay(300);
 
+        // Assert
         await using var dataSource = NpgsqlDataSource.Create(postgres.ConnectionString);
         await using var command = dataSource.CreateCommand(
             "SELECT count(*) FROM messages WHERE user_id = @userId AND state = 'Processing'");

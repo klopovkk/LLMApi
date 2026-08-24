@@ -17,8 +17,9 @@ namespace Concurrency;
 public sealed class CrossInstanceCallbackTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task A_callback_delivered_to_the_other_instance_completes_the_message()
+    public async Task PostCallback_DeliveredToTheNonSubmittingInstance_CompletesTheMessage()
     {
+        // Arrange
         await using var submitter = NewInstance("submitter");
         await using var receiver = NewInstance("receiver");
 
@@ -30,13 +31,16 @@ public sealed class CrossInstanceCallbackTests(PostgresFixture postgres)
         var messageId = await SubmitAsync(submitterClient, userId, "question");
         await WaitForStateAsync(submitterClient, messageId, "Processing");
 
+        // Arrangement guard, not the assertion under test: confirms instance 1 really is the one
+        // holding the claim, so completing through instance 2 genuinely crosses the boundary.
         var claimedBy = await ClaimedByAsync(submitterClient, messageId);
         Assert.Equal("submitter", claimedBy);
 
-        // ...completed via instance 2, which has never seen this message before.
+        // Act — completed via instance 2, which has never seen this message before.
         var response = await receiverClient.PostAsJsonAsync("/callbacks/llm",
             new { messageId, status = "completed", answer = "answered elsewhere" });
 
+        // Assert
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
         var message = await ReadAsync(submitterClient, messageId);
@@ -45,10 +49,11 @@ public sealed class CrossInstanceCallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task The_receiving_instance_starts_the_users_next_message()
+    public async Task PostCallback_DeliveredToAnotherInstance_ThatInstanceStartsTheSuccessor()
     {
         // Not just completion: the queue must advance from whichever instance took the callback,
         // which means the successor claim cannot depend on local state either.
+        // Arrange
         await using var submitter = NewInstance("adv-submitter");
         await using var receiver = NewInstance("adv-receiver");
 
@@ -60,9 +65,11 @@ public sealed class CrossInstanceCallbackTests(PostgresFixture postgres)
         var second = await SubmitAsync(submitterClient, userId, "second");
         await WaitForStateAsync(submitterClient, first, "Processing");
 
+        // Act
         await receiverClient.PostAsJsonAsync("/callbacks/llm",
             new { messageId = first, status = "completed", answer = "done" });
 
+        // Assert
         await WaitForStateAsync(receiverClient, second, "Processing");
 
         // The successor was started by the instance that received the callback, not the one that
@@ -71,10 +78,11 @@ public sealed class CrossInstanceCallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Every_callback_crosses_a_process_boundary_when_instances_point_at_each_other()
+    public async Task SubmitMessage_InstancesPointedAtEachOther_EveryCallbackCrossesAProcessBoundary()
     {
         // The composed environment's arrangement (R-011): each instance's provider posts to its
         // peer, so the cross-instance path is exercised on every message rather than by chance.
+        // Arrange
         await using var one = new InstanceFactory(
             postgres.ConnectionString, "peer-1",
             fakeProviderDelay: TimeSpan.FromMilliseconds(10),
@@ -89,12 +97,14 @@ public sealed class CrossInstanceCallbackTests(PostgresFixture postgres)
         using var clientOne = one.CreateClient();
         using var clientTwo = two.CreateClient();
 
+        // Act
         var ids = new List<Guid>();
         for (var i = 0; i < 6; i++)
         {
             ids.Add(await SubmitAsync(clientOne, $"peer-{i}-{Guid.NewGuid():N}", $"m{i}"));
         }
 
+        // Assert
         var finished = await SingleUserFifoTests.WaitForAllFinishedAsync(
             clientTwo, ids, TimeSpan.FromSeconds(30));
 

@@ -16,8 +16,9 @@ namespace Concurrency.Contracts;
 public sealed class CallbackTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Completes_the_message_and_records_the_answer()
+    public async Task PostCallback_MessageIsProcessing_CompletesItAndRecordsTheAnswer()
     {
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -25,8 +26,10 @@ public sealed class CallbackTests(PostgresFixture postgres)
         var messageId = await SubmitAsync(client, userId, "question");
         await WaitForStateAsync(client, messageId, "Processing");
 
+        // Act
         var response = await PostCallbackAsync(client, messageId, "completed", answer: "the answer");
 
+        // Assert
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
         var message = await ReadAsync(client, messageId);
@@ -39,9 +42,11 @@ public sealed class CallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Starts_the_next_message_for_that_user()
+    public async Task PostCallback_UserHasAWaitingMessage_StartsTheSuccessor()
     {
         // FR-016: reaching a final state releases the queue, with no client action.
+
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -50,15 +55,19 @@ public sealed class CallbackTests(PostgresFixture postgres)
         var second = await SubmitAsync(client, userId, "second");
         await WaitForStateAsync(client, first, "Processing");
 
+        // Act
         await PostCallbackAsync(client, first, "completed", answer: "done");
 
+        // Assert — the wait itself is the assertion: it throws if the successor never starts.
         await WaitForStateAsync(client, second, "Processing");
     }
 
     [Fact]
-    public async Task A_failed_callback_still_releases_the_queue()
+    public async Task PostCallback_StatusIsFailed_MarksItFailedAndStillStartsTheSuccessor()
     {
         // A failure must not permanently block the user (FR-016).
+
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -67,8 +76,10 @@ public sealed class CallbackTests(PostgresFixture postgres)
         var second = await SubmitAsync(client, userId, "second");
         await WaitForStateAsync(client, first, "Processing");
 
+        // Act
         await PostCallbackAsync(client, first, "failed", error: "the model refused");
 
+        // Assert
         var failed = await ReadAsync(client, first);
         Assert.Equal("Failed", failed.GetProperty("state").GetString());
         Assert.Equal("the model refused", failed.GetProperty("failureReason").GetString());
@@ -77,10 +88,14 @@ public sealed class CallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task A_duplicate_callback_completes_once_and_advances_once()
+    public async Task PostCallback_DeliveredTwiceForTheSameMessage_CompletesOnceAndAdvancesOnce()
     {
         // FR-014 and SC-010. The second delivery must not complete the message again, and must not
         // advance the queue a second time — which would start a third message out of turn.
+        //
+        // Not AAA: the duplicate delivery only means anything after the first delivery has been
+        // observed to advance the queue, so the test alternates act and assert. Splitting it into
+        // two AAA tests would lose the ordering that is the whole point.
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -108,10 +123,12 @@ public sealed class CallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task An_unknown_identifier_is_rejected_without_touching_anything_else()
+    public async Task PostCallback_UnknownMessageId_ReturnsNotFoundAndLeavesOtherMessagesUntouched()
     {
         // FR-015: no other message's turn may be released by a callback naming a message that
         // does not exist.
+
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -119,8 +136,10 @@ public sealed class CallbackTests(PostgresFixture postgres)
         var held = await SubmitAsync(client, userId, "held");
         await WaitForStateAsync(client, held, "Processing");
 
+        // Act
         var response = await PostCallbackAsync(client, Guid.NewGuid(), "completed", answer: "ghost");
 
+        // Assert
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
         var stillHeld = await ReadAsync(client, held);
@@ -128,48 +147,59 @@ public sealed class CallbackTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task An_all_zeros_identifier_is_unknown_rather_than_malformed()
+    public async Task PostCallback_AllZerosMessageId_ReturnsNotFoundRatherThanBadRequest()
     {
         // A well-formed UUID that names no message. Answering 400 here while answering 404 for
         // every other unknown identifier would be an inconsistency a caller could not reason
         // about; only an absent field is malformed.
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
 
+        // Act
         var response = await PostCallbackAsync(client, Guid.Empty, "completed", answer: "ghost");
 
+        // Assert
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task A_callback_without_a_message_identifier_is_rejected()
+    public async Task PostCallback_MessageIdAbsent_ReturnsBadRequest()
     {
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.PostAsJsonAsync("/callbacks/llm",
             new { status = "completed", answer = "orphan" });
 
+        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task A_malformed_callback_is_rejected()
+    public async Task PostCallback_UnrecognisedStatus_ReturnsBadRequest()
     {
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.PostAsJsonAsync("/callbacks/llm",
             new { messageId = Guid.NewGuid(), status = "sideways" });
 
+        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task No_credential_is_required()
+    public async Task PostCallback_NoCredentialSupplied_StillCompletesTheMessage()
     {
         // FR-020a: the endpoint verifies nothing about its caller. Asserted so that adding a
         // credential check later is a deliberate decision that breaks a test, not a drift.
+
+        // Arrange
         await using var instance = NewInstance();
         using var client = instance.CreateClient();
         var userId = UserId();
@@ -177,12 +207,14 @@ public sealed class CallbackTests(PostgresFixture postgres)
         var messageId = await SubmitAsync(client, userId, "question");
         await WaitForStateAsync(client, messageId, "Processing");
 
+        // Act
         using var request = new HttpRequestMessage(HttpMethod.Post, "/callbacks/llm")
         {
             Content = JsonContent.Create(new { messageId, status = "completed", answer = "anonymous" }),
         };
         var response = await client.SendAsync(request);
 
+        // Assert
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 

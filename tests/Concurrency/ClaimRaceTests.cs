@@ -18,8 +18,11 @@ public sealed class ClaimRaceTests(PostgresFixture postgres)
     private const int Rounds = 100;
 
     [Fact]
-    public async Task A_contended_claim_has_exactly_one_winner_every_time()
+    public async Task TryClaimNextAsync_EightCallersContendingForOneMessage_ExactlyOneWins()
     {
+        // Not AAA: arrangement and action repeat per round — each of the 100 rounds inserts a
+        // fresh message and races for it — and only the aggregate is asserted at the end. One
+        // round in AAA form would prove nothing, because a single uncontended claim always works.
         await using var instance = new InstanceFactory(
             postgres.ConnectionString, "claim-race", fakeProviderMode: "NeverRespond");
         var store = instance.Services.GetRequiredService<MessageStore>();
@@ -47,8 +50,11 @@ public sealed class ClaimRaceTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task The_claim_always_takes_the_lowest_pending_sequence()
+    public async Task TryClaimNextAsync_SeveralMessagesPending_ClaimsLowestSequenceFirst()
     {
+        // Not AAA: claiming and completing alternate. Each claim can only happen once its
+        // predecessor has reached a final state, so the interleaving is the exclusivity rule
+        // itself rather than a shortcut.
         await using var instance = new InstanceFactory(
             postgres.ConnectionString, "claim-order", fakeProviderMode: "NeverRespond");
         var store = instance.Services.GetRequiredService<MessageStore>();
@@ -77,8 +83,9 @@ public sealed class ClaimRaceTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task No_claim_is_possible_while_the_user_already_has_one_active()
+    public async Task TryClaimNextAsync_UserAlreadyHasActiveMessage_ReturnsNull()
     {
+        // Arrange
         await using var instance = new InstanceFactory(
             postgres.ConnectionString, "claim-busy", fakeProviderMode: "NeverRespond");
         var store = instance.Services.GetRequiredService<MessageStore>();
@@ -87,10 +94,15 @@ public sealed class ClaimRaceTests(PostgresFixture postgres)
         await store.InsertAsync(userId, "first", CancellationToken.None);
         await store.InsertAsync(userId, "second", CancellationToken.None);
 
+        // Arrangement guard rather than the assertion under test: the user must actually be busy
+        // before "cannot claim while busy" means anything.
         var first = await store.TryClaimNextAsync(userId, CancellationToken.None);
         Assert.NotNull(first);
 
+        // Act
         var second = await store.TryClaimNextAsync(userId, CancellationToken.None);
+
+        // Assert
         Assert.Null(second);
     }
 }

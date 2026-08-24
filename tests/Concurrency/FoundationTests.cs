@@ -16,22 +16,25 @@ namespace Concurrency;
 public sealed class FoundationTests(PostgresFixture postgres)
 {
     [Fact]
-    public async Task Schema_applied_concurrently_by_two_callers_yields_one_table_and_no_error()
+    public async Task ApplyAsync_EightCallersApplyingConcurrently_CreatesOneTableWithoutError()
     {
         // Two instances starting together is the normal case here, and CREATE TABLE IF NOT EXISTS
         // is not race-free in PostgreSQL — concurrent creation can raise a duplicate-key error on
         // the system catalog. The advisory lock in SchemaInitializer is what removes that (R-007).
+        // Arrange
         await using var dataSource = NpgsqlDataSource.Create(postgres.ConnectionString);
 
         var initializers = Enumerable.Range(0, 8)
             .Select(_ => new SchemaInitializer(dataSource))
             .ToArray();
 
+        // Act
         var applications = initializers.Select(i => Task.Run(() => i.ApplyAsync(CancellationToken.None)));
 
         // Must not throw: a duplicate-key error on pg_class here means the lock is missing.
         await Task.WhenAll(applications);
 
+        // Assert
         Assert.Equal(1, await ScalarAsync(dataSource,
             "SELECT count(*) FROM information_schema.tables WHERE table_name = 'messages'"));
 
@@ -44,13 +47,16 @@ public sealed class FoundationTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Health_reports_store_reachable_when_it_is()
+    public async Task GetHealth_StoreIsReachable_ReturnsOkAndStoreReachableTrue()
     {
+        // Arrange
         await using var instance = new InstanceFactory(postgres.ConnectionString, "health-up");
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.GetAsync("/health");
 
+        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(body.GetProperty("storeReachable").GetBoolean());
@@ -58,17 +64,20 @@ public sealed class FoundationTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Health_reports_store_unreachable_when_it_is_not()
+    public async Task GetHealth_StoreIsUnreachable_ReturnsServiceUnavailableAndStoreReachableFalse()
     {
         // The instance is up; the store is not. That distinction is the reason this endpoint
         // exists — FR-022 describes behaviour during an outage and it needs an observable signal.
+        // Arrange
         await using var instance = new InstanceFactory(
             "Host=127.0.0.1;Port=1;Database=nowhere;Username=none;Password=none;Timeout=1",
             "health-down");
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.GetAsync("/health");
 
+        // Assert
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.False(body.GetProperty("storeReachable").GetBoolean());

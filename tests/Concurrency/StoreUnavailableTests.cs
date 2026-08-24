@@ -25,14 +25,17 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
         "Host=127.0.0.1;Port=1;Database=nowhere;Username=none;Password=none;Timeout=1;Command Timeout=1";
 
     [Fact]
-    public async Task Submission_is_refused_as_retryable_and_issues_no_identifier()
+    public async Task SubmitMessage_StoreUnreachable_ReturnsRetryableServiceUnavailableWithNoIdentifier()
     {
+        // Arrange
         await using var instance = new InstanceFactory(Unreachable, "outage-submit");
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.PostAsJsonAsync("/messages",
             new { userId = "someone", content = "during the outage" });
 
+        // Assert
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
 
         var body = await response.Content.ReadAsStringAsync();
@@ -47,8 +50,11 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Reads_and_callbacks_are_refused_too()
+    public async Task GetMessageAndPostCallback_StoreUnreachable_BothReturnServiceUnavailable()
     {
+        // Not AAA: two separate operations are exercised in one test, each with its own act and
+        // assert. They are kept together because the requirement is that *every* endpoint refuses
+        // identically during an outage, and splitting them would obscure that shared rule.
         await using var instance = new InstanceFactory(Unreachable, "outage-read");
         using var client = instance.CreateClient();
 
@@ -61,15 +67,18 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Health_reports_the_outage_while_the_instance_stays_up()
+    public async Task GetHealth_StoreUnreachableButInstanceUp_ReportsStoreUnreachable()
     {
         // The instance being alive and the store being reachable are different facts, and an
         // operator needs to tell them apart.
+        // Arrange
         await using var instance = new InstanceFactory(Unreachable, "outage-health");
         using var client = instance.CreateClient();
 
+        // Act
         var response = await client.GetAsync("/health");
 
+        // Assert
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.False(body.GetProperty("storeReachable").GetBoolean());
@@ -77,16 +86,19 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Nothing_is_buffered_and_no_phantom_message_appears_afterwards()
+    public async Task SubmitMessage_RefusedDuringOutage_WritesNothingOnceTheStoreReturns()
     {
         // FR-022a. If an instance held refused submissions in memory and flushed them later, this
         // is where it would show: the user would acquire messages nobody was ever told about.
+        // Arrange
         var userId = $"outage-{Guid.NewGuid():N}";
 
         await using (var offline = new InstanceFactory(Unreachable, "outage-buffer"))
         {
             using var offlineClient = offline.CreateClient();
 
+            // Act — the in-loop assertion is a guard that the outage is real, not the assertion
+            // under test; that one comes after the instance is disposed.
             for (var i = 0; i < 5; i++)
             {
                 var response = await offlineClient.PostAsJsonAsync("/messages",
@@ -95,6 +107,7 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
             }
         }
 
+        // Assert
         await using var dataSource = NpgsqlDataSource.Create(postgres.ConnectionString);
         await using var command = dataSource.CreateCommand(
             "SELECT count(*) FROM messages WHERE user_id = @u");
@@ -104,11 +117,14 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task An_instance_survives_the_outage_and_serves_normally_once_the_store_returns()
+    public async Task GetHealthAndSubmitMessage_InstanceBootedDuringOutage_ServeNormallyOnceTheStoreReturns()
     {
         // FR-022b: recovery is unattended. The instance starts against a proxy that is switched
         // off — so even schema application fails — and must become useful when the store comes
         // back, without a restart and without anyone intervening.
+        // Not AAA: the outage must be observed before it is lifted, or the recovery afterwards
+        // proves nothing. Assert 503, act by opening the store, assert recovery, act again by
+        // submitting. The sequence is the requirement.
         await using var proxy = new StoreProxy(postgres.ConnectionString);
         // Deliberately not opened yet: the instance boots into an outage.
 
@@ -142,10 +158,12 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task Work_pending_before_an_outage_resumes_afterwards()
+    public async Task SubmitMessage_AcceptedBeforeAnOutage_ResumesUnattendedAfterwards()
     {
         // The other half of FR-022b: not just that the instance answers again, but that work it
         // already accepted is picked up rather than stranded.
+        // Not AAA: accept work, take the store away, confirm it is gone, bring it back, then
+        // assert the work resumed. Each step depends on the previous one having been observed.
         await using var proxy = new StoreProxy(postgres.ConnectionString);
         proxy.Open();
 
@@ -186,15 +204,18 @@ public sealed class StoreUnavailableTests(PostgresFixture postgres)
     }
 
     [Fact]
-    public async Task No_outage_response_contains_message_content()
+    public async Task SubmitMessage_RefusedDuringOutage_ResponseContainsNoMessageContent()
     {
+        // Arrange
         await using var instance = new InstanceFactory(Unreachable, "outage-content");
         using var client = instance.CreateClient();
         const string secret = "correct-horse-battery-staple";
 
+        // Act
         var response = await client.PostAsJsonAsync("/messages",
             new { userId = "someone", content = secret });
 
+        // Assert
         var body = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain(secret, body, StringComparison.Ordinal);
     }

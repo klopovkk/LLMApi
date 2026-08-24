@@ -24,8 +24,12 @@ public sealed class LoggingPolicyTests(PostgresFixture postgres)
     private const string Secret = "correct-horse-battery-staple-9f3c1d";
 
     [Fact]
-    public async Task Message_content_never_appears_in_the_log_at_any_level()
+    public async Task MessageLifecycle_ContentSubmittedAndFailed_NeverAppearsInTheLogAtAnyLevel()
     {
+        // Not AAA: the point is that content stays out of the log across an entire lifecycle, so
+        // the test drives several actions in sequence — accept, claim, complete, advance, fail,
+        // reject — and asserts once over everything they logged. Each action in its own AAA test
+        // would leave the paths between them unchecked, and those are where leaks hide.
         var recorder = new LogRecorder();
 
         await using var instance = new CapturingInstanceFactory(
