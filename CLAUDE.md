@@ -15,7 +15,9 @@ the constitution is amended.
 - `src/Middleware` — API + message processing
 - `src/LLM.Abstraction` — LLM boundary (Principle IV)
 - `src/LLM.FakeProvider` — test double for the LLM (used per Principle V)
-- `tests/Concurrency` — the five required scenario tests
+- `tests/Concurrency` — the seven required scenario tests: the five in Principle V, plus
+  claim expiry and store-unavailable (see the Principle V gate note in the active plan)
+
 ## Commands
 
 - Build: `dotnet build`

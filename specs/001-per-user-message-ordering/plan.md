@@ -197,10 +197,10 @@ Both raised by this plan under Principle VII, both now resolved:
    scope list stays as written and the existing `docs(infra)` commits on this branch stay
    consistent with it.
 
-One consequence worth carrying into implementation: `CLAUDE.md` describes `tests/Concurrency` as
-"the five required scenario tests". The Principle V gate note above adds two more (claim expiry and
-store unavailable). That line should be corrected when the test project is created, in the same
-commit — not now, since the tests do not exist yet.
+3. **`CLAUDE.md` scenario count** — RESOLVED. The line describing `tests/Concurrency` as "the five
+   required scenario tests" now reads seven: the five in Principle V, plus claim expiry and
+   store-unavailable from the gate note above. Corrected ahead of the test project existing so the
+   working agreement states the real obligation from the outset rather than after the fact.
 
 ## Implementation sequence
 
