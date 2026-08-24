@@ -248,8 +248,9 @@ components:
           type: [string, 'null']
           format: date-time
           description: |
-            When the current claim was taken. Ordering of claimedAt across a user's messages is
-            how FIFO start order is asserted from data rather than from test timing (SC-002).
+            When the message started processing. Retained after the message reaches a final
+            state, because ordering of claimedAt across a user's messages is how FIFO start
+            order is asserted from data rather than from test timing (SC-002).
         finishedAt:
           type: [string, 'null']
           format: date-time

@@ -200,9 +200,21 @@ internal sealed class CallbackRecorder : IDisposable
                 AttemptCount++;
                 if (!Refuse)
                 {
-                    var completion = JsonSerializer.Deserialize<LlmCompletion>(
-                        body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                    if (completion is not null) _received.Add(completion);
+                    // Parsed as the wire shape from contracts/openapi.yaml — messageId plus a
+                    // status string — rather than as LlmCompletion, which is the in-process
+                    // representation. Asserting on the wire shape is the point: it is what a real
+                    // provider would have to send.
+                    var wire = JsonSerializer.Deserialize<JsonElement>(body);
+                    var status = wire.GetProperty("status").GetString();
+                    _received.Add(new LlmCompletion(
+                        wire.GetProperty("messageId").GetGuid(),
+                        status == "completed",
+                        wire.TryGetProperty("answer", out var a) && a.ValueKind != JsonValueKind.Null
+                            ? a.GetString()
+                            : null,
+                        wire.TryGetProperty("error", out var e) && e.ValueKind != JsonValueKind.Null
+                            ? e.GetString()
+                            : null));
                 }
             }
 

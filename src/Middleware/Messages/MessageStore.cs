@@ -147,6 +147,11 @@ public sealed class MessageStore(
     /// <summary>
     /// Statement 3 — completion from a callback.
     ///
+    /// <c>claimed_at</c> is deliberately left in place rather than cleared. It records when the
+    /// message started processing, which is the evidence FIFO is asserted from (SC-002) and which
+    /// an operator needs in order to see how long a finished message actually took. Nothing reads
+    /// it without also filtering on <c>state = 'Processing'</c>, so leaving it set is safe.
+    ///
     /// <c>AND state = 'Processing'</c> is the whole of the idempotency story. A duplicate callback
     /// (FR-014), a post-expiry callback (FR-013b), and a callback for an already-failed message all
     /// match zero rows and change nothing. Because the successor claim runs only when this returns
@@ -171,7 +176,6 @@ public sealed class MessageStore(
                SET state          = @finalState,
                    answer         = @answer,
                    failure_reason = @failureReason,
-                   claimed_at     = NULL,
                    finished_at    = @now
              WHERE id    = @id
                AND state = 'Processing'

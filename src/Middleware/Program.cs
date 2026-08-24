@@ -52,6 +52,7 @@ await ApplySchemaAsync(app);
 
 app.MapHealthEndpoints();
 app.MapMessageEndpoints();
+app.MapCallbackEndpoints();
 
 app.Run();
 

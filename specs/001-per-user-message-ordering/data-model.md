@@ -13,7 +13,8 @@ statement both select the next message and take exclusivity (R-001, R-002).
 
 The only persisted entity. Maps the spec's **Message** and **Processing claim** onto one row — the
 claim is `state = 'Processing'` plus `claimed_at`, and it is released by the same update that
-records a final state.
+records a final state. Release is expressed by the state change alone; `claimed_at` stays behind as
+the record of when processing started.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -25,7 +26,7 @@ records a final state.
 | `answer` | `text` NULL | Set only on transition to `Completed`. |
 | `failure_reason` | `text` NULL | Set only on transition to `Failed`. Distinguishes a provider-reported failure from an expiry, which Principle II's inspectability requirement needs. |
 | `accepted_at` | `timestamptz` | For reporting only — never used to order (R-003). |
-| `claimed_at` | `timestamptz` NULL | When the current claim was taken. The expiry predicate reads this. Cleared on reaching a final state. |
+| `claimed_at` | `timestamptz` NULL | When the message started processing. The expiry predicate reads it together with `state = 'Processing'`. **Not** cleared on reaching a final state: it is the evidence FIFO is asserted from (SC-002), and clearing it would destroy the record of when a finished message actually started. |
 | `finished_at` | `timestamptz` NULL | When a final state was recorded. |
 | `claimed_by` | `text` NULL | Instance identity that claimed it. Diagnostics only — no correctness depends on it, and in particular nothing routes a callback by it (FR-006). |
 
@@ -180,7 +181,6 @@ UPDATE messages
    SET state          = @finalState,     -- 'Completed' | 'Failed'
        answer         = @answer,
        failure_reason = @failureReason,
-       claimed_at     = NULL,
        finished_at    = @now
  WHERE id    = @id
    AND state = 'Processing'
@@ -199,7 +199,6 @@ no such id means unknown (FR-015), which the API distinguishes with a separate e
 UPDATE messages
    SET state          = 'Failed',
        failure_reason = 'No completion callback was received before the claim expired.',
-       claimed_at     = NULL,
        finished_at    = @now
  WHERE state      = 'Processing'
    AND claimed_at < @cutoff

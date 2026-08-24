@@ -53,9 +53,19 @@ public sealed class FakeLlmClient(
                     $"Answer for {submission.MessageId:N}.",
                     null);
 
+            // LlmCompletion is the in-process representation; the wire shape is the one defined in
+            // contracts/openapi.yaml, which spells the outcome as a status string rather than a
+            // boolean. Mapping happens here, at the edge, so the abstraction does not have to
+            // carry a transport detail and the endpoint does not have to accept two shapes.
+            var payload = new CompletionPayload(
+                completion.MessageId,
+                completion.Succeeded ? "completed" : "failed",
+                completion.Answer,
+                completion.Error);
+
             // One attempt. No retry, ever (FR-019a) — a lost answer is resolved by claim expiry,
             // which keeps exactly one recovery mechanism in the system rather than two.
-            using var response = await httpClient.PostAsJsonAsync(submission.CallbackUri, completion);
+            using var response = await httpClient.PostAsJsonAsync(submission.CallbackUri, payload);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -74,3 +84,9 @@ public sealed class FakeLlmClient(
         }
     }
 }
+
+/// <summary>
+/// The callback body exactly as contracts/openapi.yaml defines it. Private to the provider: it is
+/// a transport detail, not part of the boundary.
+/// </summary>
+internal sealed record CompletionPayload(Guid MessageId, string Status, string? Answer, string? Error);

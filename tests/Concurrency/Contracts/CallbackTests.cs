@@ -32,7 +32,9 @@ public sealed class CallbackTests(PostgresFixture postgres)
         var message = await ReadAsync(client, messageId);
         Assert.Equal("Completed", message.GetProperty("state").GetString());
         Assert.Equal("the answer", message.GetProperty("answer").GetString());
-        Assert.Equal(JsonValueKind.Null, message.GetProperty("claimedAt").ValueKind);
+        // claimedAt survives completion: it records when processing started, which is what FIFO
+        // is asserted from and what tells an operator how long the message actually took.
+        Assert.NotEqual(JsonValueKind.Null, message.GetProperty("claimedAt").ValueKind);
         Assert.NotEqual(JsonValueKind.Null, message.GetProperty("finishedAt").ValueKind);
     }
 
