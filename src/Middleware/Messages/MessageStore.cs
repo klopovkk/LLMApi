@@ -207,6 +207,57 @@ public sealed class MessageStore(
     }
 
     /// <summary>
+    /// Statement 4 — expire stale claims.
+    ///
+    /// The cutoff is computed here, in application code, from the injected
+    /// <see cref="TimeProvider"/> rather than from SQL <c>now()</c>. That is deliberate: it is what
+    /// lets a test advance a fake clock instead of sleeping through a real timeout (R-005). Expiry
+    /// is the only recovery path in the system, so it must be a scenario that actually gets run.
+    ///
+    /// The <c>state = 'Processing'</c> guard means an expiry cannot race a completing callback:
+    /// whichever commits first wins and the other matches nothing.
+    /// </summary>
+    /// <returns>The users whose queues were released, ready to be started again.</returns>
+    public async Task<IReadOnlyList<string>> ExpireStaleClaimsAsync(CancellationToken cancellationToken)
+    {
+        var cutoff = timeProvider.GetUtcNow() - _options.ClaimTimeout;
+
+        const string sql = """
+            UPDATE messages
+               SET state          = 'Failed',
+                   failure_reason = 'No completion callback was received before the claim expired.',
+                   finished_at    = @now
+             WHERE state      = 'Processing'
+               AND claimed_at < @cutoff
+            RETURNING id, user_id;
+            """;
+
+        await using var command = dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue("now", NpgsqlDbType.TimestampTz, timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("cutoff", NpgsqlDbType.TimestampTz, cutoff);
+
+        var expired = new List<(Guid Id, string UserId)>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                expired.Add((reader.GetGuid(0), reader.GetString(1)));
+            }
+        }
+
+        foreach (var (id, userId) in expired)
+        {
+            // Warning, not Information: nobody answered, and somebody may want to know why.
+            logger.LogWarning(
+                "Claim on message {MessageId} for user {UserId} expired on {InstanceId} after "
+                + "{ClaimTimeout}; the message is failed and the queue released.",
+                id, userId, _options.InstanceId, _options.ClaimTimeout);
+        }
+
+        return expired.Select(e => e.UserId).Distinct().ToArray();
+    }
+
+    /// <summary>
     /// Sweeper support: users who have work waiting and nothing active.
     ///
     /// Both instances running this concurrently is safe and expected — the claim decides the

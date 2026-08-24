@@ -66,6 +66,17 @@ public sealed class ProcessingSweeper(
 
     private async Task SweepAsync(CancellationToken cancellationToken)
     {
+        // Expiry first. A released queue found in this pass is picked up by the same pass rather
+        // than waiting another interval, and the returned users feed straight into the pickup
+        // below without a second query.
+        var released = await store.ExpireStaleClaimsAsync(cancellationToken);
+
+        foreach (var user in released)
+        {
+            if (cancellationToken.IsCancellationRequested) return;
+            await dispatcher.TryStartNextAsync(user, cancellationToken);
+        }
+
         var users = await store.FindUsersWithPendingWorkAsync(_options.SweepBatchSize, cancellationToken);
 
         foreach (var user in users)

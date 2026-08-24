@@ -161,7 +161,7 @@ delivery (FR-019a) this is the **only** recovery path in the system.
 `ClaimTimeout`, and watch it fail and the queue release.
 
 - [X] T021 Write the failing tests in `tests/Concurrency/ClaimExpiryTests.cs` using `FakeTimeProvider`: a never-answered message becomes `Failed` with a reason identifying expiry and the user's next message starts (FR-013, SC-011); the expired message is never re-submitted (FR-013a); and a callback arriving after expiry leaves it `Failed` and does not disturb the user's currently active message (FR-013b, SC-012)
-- [ ] T022 Make T021 pass: implement `MessageStore.ExpireStaleClaimsAsync` in `src/Middleware/Messages/MessageStore.cs` using statement 4, with `@cutoff` computed in application code as `TimeProvider.GetUtcNow() - ClaimTimeout` so tests advance time instead of sleeping (R-005), and call it from `ProcessingSweeper` in `src/Middleware/Processing/ProcessingSweeper.cs` before the pending-pickup pass, feeding returned user identifiers straight into `TryStartNextAsync`. Confirm no test in the suite sleeps waiting for a timeout
+- [X] T022 Make T021 pass: implement `MessageStore.ExpireStaleClaimsAsync` in `src/Middleware/Messages/MessageStore.cs` using statement 4, with `@cutoff` computed in application code as `TimeProvider.GetUtcNow() - ClaimTimeout` so tests advance time instead of sleeping (R-005), and call it from `ProcessingSweeper` in `src/Middleware/Processing/ProcessingSweeper.cs` before the pending-pickup pass, feeding returned user identifiers straight into `TryStartNextAsync`. Confirm no test in the suite sleeps waiting for a timeout
 
 **Checkpoint**: Stalled work self-heals; no user can be permanently blocked.
 
