@@ -1,5 +1,6 @@
 using Middleware.Api;
 using Middleware.Configuration;
+using Middleware.Messages;
 using Middleware.Schema;
 using Npgsql;
 
@@ -21,6 +22,7 @@ builder.Services.AddSingleton(_ =>
 });
 
 builder.Services.AddSingleton<SchemaInitializer>();
+builder.Services.AddSingleton<MessageStore>();
 
 var app = builder.Build();
 
@@ -30,6 +32,7 @@ var app = builder.Build();
 await ApplySchemaAsync(app);
 
 app.MapHealthEndpoints();
+app.MapMessageEndpoints();
 
 app.Run();
 

@@ -70,7 +70,7 @@ that passes when first written is a bug in the test, not a task finished early.
 with a distinct identifier and an ascending sequence.
 
 - [X] T006 [US1] Write the failing tests in `tests/Concurrency/Contracts/SubmitMessageTests.cs` and `tests/Concurrency/Contracts/GetMessageTests.cs`: 202 carrying `messageId`, `sequence`, `state`, and `acceptedAt`; ascending `sequence` across rapid submissions; 400 on blank `userId` or `content` with no queued state created (FR-017); two identical submissions producing two distinct messages (FR-009a); 200 on read with the fields in `contracts/openapi.yaml`; 404 for an unknown identifier; and the read response never echoing submitted content
-- [ ] T007 [US1] Make T006 pass: implement `MessageStore.InsertAsync` (statement 1 from `data-model.md`, returning the assigned `sequence`) and `MessageStore.GetByIdAsync` (statement 5, selecting no `content` column) in `src/Middleware/Messages/MessageStore.cs`, and `POST /messages` plus `GET /messages/{messageId}` with request validation in `src/Middleware/Api/MessageEndpoints.cs`
+- [X] T007 [US1] Make T006 pass: implement `MessageStore.InsertAsync` (statement 1 from `data-model.md`, returning the assigned `sequence`) and `MessageStore.GetByIdAsync` (statement 5, selecting no `content` column) in `src/Middleware/Messages/MessageStore.cs`, and `POST /messages` plus `GET /messages/{messageId}` with request validation in `src/Middleware/Api/MessageEndpoints.cs`
 
 **Checkpoint**: Messages are accepted and durably recorded in acceptance order; nothing processes them yet.
 
