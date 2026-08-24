@@ -57,6 +57,152 @@ public sealed class MessageStore(
     }
 
     /// <summary>
+    /// Statement 2 — the claim. This single statement is where the feature is either correct or
+    /// not, so it is written out literally rather than composed.
+    ///
+    /// Three guards, each covering a race the others cannot:
+    ///
+    /// <c>AND state = 'Pending'</c> on the target row is what stops the *same* message being
+    /// claimed twice. It is not redundant with the subselect. Under READ COMMITTED, when a blocked
+    /// UPDATE re-checks its qual after the winner commits (EvalPlanQual), the row's own columns are
+    /// re-read from the new version but subqueries in the qual are *not* re-evaluated — they keep
+    /// the original snapshot. Without this predicate every blocked caller still saw a Pending
+    /// message and no active one, and each re-updated the same row: measured at 99 double-claims
+    /// per 100 contended rounds. The unique index cannot catch that, because updating one row
+    /// repeatedly never produces a second Processing row.
+    ///
+    /// The <c>NOT EXISTS</c> enforces per-user exclusivity in the uncontended case, making a busy
+    /// user a no-op rather than an error.
+    ///
+    /// <c>ux_messages_active_per_user</c> is the backstop for the remaining race: two instances on
+    /// different snapshots targeting *different* pending messages for one user, both passing the
+    /// NOT EXISTS. One commits; the other takes a unique violation, caught below as "lost the
+    /// race". That index — not this code — is the last guarantee behind FR-003.
+    ///
+    /// The subselect's <c>ORDER BY sequence</c> is what makes the claim FIFO (FR-002).
+    /// </summary>
+    /// <returns>The claimed message, or <c>null</c> if there was nothing to claim or the race was lost.</returns>
+    public async Task<ClaimedMessage?> TryClaimNextAsync(
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE messages
+               SET state      = 'Processing',
+                   claimed_at = @now,
+                   claimed_by = @instanceId
+             WHERE id = (
+                     SELECT id
+                       FROM messages
+                      WHERE user_id = @userId
+                        AND state   = 'Pending'
+                      ORDER BY sequence
+                      LIMIT 1
+                   )
+               AND state = 'Pending'
+               AND NOT EXISTS (
+                     SELECT 1 FROM messages
+                      WHERE user_id = @userId
+                        AND state   = 'Processing'
+                   )
+            RETURNING id, user_id, content, sequence;
+            """;
+
+        try
+        {
+            await using var command = dataSource.CreateCommand(sql);
+            command.Parameters.AddWithValue("userId", userId);
+            command.Parameters.AddWithValue("now", NpgsqlDbType.TimestampTz, timeProvider.GetUtcNow());
+            command.Parameters.AddWithValue("instanceId", _options.InstanceId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                return null;
+            }
+
+            var claimed = new ClaimedMessage(
+                Id: reader.GetGuid(0),
+                UserId: reader.GetString(1),
+                Content: reader.GetString(2),
+                Sequence: reader.GetInt64(3));
+
+            logger.LogInformation(
+                "Message {MessageId} claimed for user {UserId} at sequence {Sequence} by {InstanceId}.",
+                claimed.Id, claimed.UserId, claimed.Sequence, _options.InstanceId);
+
+            return claimed;
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // Losing the race is an ordinary outcome, not a fault: another instance claimed this
+            // user's next message between our NOT EXISTS check and our write. The index did its
+            // job. Debug rather than Warning — under contention this is expected traffic.
+            logger.LogDebug(
+                "Lost a claim race for user {UserId} on {InstanceId}.", userId, _options.InstanceId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Statement 3 — completion from a callback.
+    ///
+    /// <c>AND state = 'Processing'</c> is the whole of the idempotency story. A duplicate callback
+    /// (FR-014), a post-expiry callback (FR-013b), and a callback for an already-failed message all
+    /// match zero rows and change nothing. Because the successor claim runs only when this returns
+    /// a user, the queue also advances exactly once (SC-010).
+    /// </summary>
+    /// <returns>The owning user id when this call completed the message; <c>null</c> when it was a no-op.</returns>
+    public async Task<string?> TryCompleteAsync(
+        Guid id,
+        MessageState finalState,
+        string? answer,
+        string? failureReason,
+        CancellationToken cancellationToken)
+    {
+        if (finalState is not (MessageState.Completed or MessageState.Failed))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(finalState), finalState, "Only Completed or Failed are final states.");
+        }
+
+        const string sql = """
+            UPDATE messages
+               SET state          = @finalState,
+                   answer         = @answer,
+                   failure_reason = @failureReason,
+                   claimed_at     = NULL,
+                   finished_at    = @now
+             WHERE id    = @id
+               AND state = 'Processing'
+            RETURNING user_id;
+            """;
+
+        await using var command = dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("finalState", finalState.ToString());
+        command.Parameters.AddWithValue("answer", (object?)answer ?? DBNull.Value);
+        command.Parameters.AddWithValue("failureReason", (object?)failureReason ?? DBNull.Value);
+        command.Parameters.AddWithValue("now", NpgsqlDbType.TimestampTz, timeProvider.GetUtcNow());
+
+        var userId = (string?)await command.ExecuteScalarAsync(cancellationToken);
+
+        if (userId is null)
+        {
+            logger.LogDebug(
+                "Completion for message {MessageId} was a no-op: it is not in Processing.", id);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Message {MessageId} for user {UserId} reached {FinalState} on {InstanceId}.",
+                id, userId, finalState, _options.InstanceId);
+        }
+
+        return userId;
+    }
+
+    /// <summary>
     /// Statement 5. Content is not selected: the status response does not echo it (FR-021).
     /// </summary>
     public async Task<Message?> GetByIdAsync(Guid id, CancellationToken cancellationToken)

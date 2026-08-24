@@ -140,6 +140,7 @@ UPDATE messages
           ORDER BY sequence
           LIMIT 1
        )
+   AND state = 'Pending'
    AND NOT EXISTS (
          SELECT 1 FROM messages
           WHERE user_id = @userId
@@ -148,14 +149,26 @@ UPDATE messages
 RETURNING id, user_id, content, sequence;
 ```
 
-Two guards, deliberately overlapping:
+Three guards, each covering a race the others cannot:
 
-- The `NOT EXISTS` makes the ordinary case a no-op rather than an error — under no contention this
-  simply returns zero rows when the user is already busy.
-- `ux_messages_active_per_user` catches the case the `NOT EXISTS` cannot: two instances evaluating
-  it in overlapping transactions both see no active message, and both try to write. One commits, the
-  other gets a unique violation, which the caller treats as "lost the race" (not an error). This is
-  the guard that makes FR-012 and SC-005 hold; the `NOT EXISTS` is an optimization on top of it.
+- **`AND state = 'Pending'` on the target row** is what stops the *same* message being claimed
+  twice, and it is not redundant with the subselect. Under `READ COMMITTED`, when a blocked `UPDATE`
+  re-checks its qualification after the winner commits (EvalPlanQual), the row's own columns are
+  re-read from the new version, but **subqueries in the qualification are not re-evaluated** — they
+  keep the original snapshot. Without this predicate, every blocked caller still saw a pending
+  message and no active one, and each re-updated the same row. Measured before the fix: 99
+  double-claims per 100 contended rounds. The unique index cannot catch this, because updating one
+  row repeatedly never produces a second `Processing` row for the user.
+- The **`NOT EXISTS`** enforces per-user exclusivity in the uncontended case, making a claim against
+  a busy user a no-op rather than an error.
+- **`ux_messages_active_per_user`** is the backstop for the remaining race: two instances on
+  different snapshots targeting *different* pending messages for one user, both passing the
+  `NOT EXISTS`. One commits, the other gets a unique violation, which the caller treats as "lost the
+  race" rather than an error.
+
+Together these are what make FR-012 and SC-005 hold. Removing any one of them reopens a race, and
+the first was found only by running 100 contended rounds against a real PostgreSQL — which is the
+argument for R-010's insistence on a real server in the test suite rather than a substitute.
 
 Subselect ordering by `sequence` is what makes the claim FIFO (FR-002). The statement returns the
 claimed row so the caller can submit without a second read.
