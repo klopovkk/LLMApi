@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>LLM.Abstraction</RootNamespace>
+    <AssemblyName>LLM.Abstraction</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately empty: no package references, no project references.
+    This assembly is the Principle IV boundary, and it stays dependency-free so that
+    nothing on either side of it can leak across by way of a shared dependency.
+  -->
+
+</Project>

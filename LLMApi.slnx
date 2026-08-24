@@ -1,3 +1,10 @@
 <Solution>
-  <Project Path="LLMApi.Api/LLMApi.Api.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/Middleware/Middleware.csproj" />
+    <Project Path="src/LLM.Abstraction/LLM.Abstraction.csproj" />
+    <Project Path="src/LLM.FakeProvider/LLM.FakeProvider.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Concurrency/Concurrency.csproj" />
+  </Folder>
 </Solution>

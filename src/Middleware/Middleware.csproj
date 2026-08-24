@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Middleware</RootNamespace>
+    <AssemblyName>Middleware</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      No OpenAPI generator package: the HTTP contract is authored by hand in
+      specs/001-per-user-message-ordering/contracts/openapi.yaml, so generating a second,
+      possibly divergent description at runtime would add a dependency and a drift risk
+      without adding a guarantee (Principle VI).
+    -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The Principle IV boundary. Middleware logic depends on the abstraction alone.
+
+      LLM.FakeProvider is referenced because a composition root has to name a concrete
+      implementation to register it — an executable must compose something. The rule that matters
+      is therefore narrower than "no reference": no file under src/Middleware except Program.cs may
+      mention LLM.FakeProvider. That is enforced by BoundaryTests rather than by the compiler,
+      because the compiler cannot express "this one file may".
+    -->
+    <ProjectReference Include="..\LLM.Abstraction\LLM.Abstraction.csproj" />
+    <ProjectReference Include="..\LLM.FakeProvider\LLM.FakeProvider.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Schema\schema.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Concurrency" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,309 @@
+openapi: 3.1.0
+
+info:
+  title: LLMApi Middleware
+  version: 1.0.0
+  description: |
+    Accepts messages for a user, starts them one at a time in acceptance order, and completes
+    them from an asynchronous language-model callback that any instance may receive.
+
+    No endpoint requires authentication (FR-020). The callback endpoint verifies nothing about
+    its caller and message identifiers carry no unguessability requirement (FR-020a) — every
+    caller is trusted because the target environment is a local composed deployment.
+
+    Every endpoint answers 503 while the shared store is unreachable (FR-022). Nothing is
+    buffered in process memory during an outage (FR-022a).
+
+servers:
+  - url: http://localhost:5001
+    description: Instance 1
+  - url: http://localhost:5002
+    description: Instance 2
+
+paths:
+
+  /messages:
+    post:
+      summary: Submit a message
+      description: |
+        Accepts the message, assigns it a position in the user's stream, and acknowledges it
+        before any answer exists (FR-001, FR-009). The client need not wait for or coordinate
+        with its other submissions.
+
+        Every submission is a distinct message: identical content submitted twice becomes two
+        messages, both answered in order (FR-009a). There is no idempotency key.
+
+        Returns 202 rather than 201 because acceptance is the whole of what has happened —
+        processing may not have started, and typically has not.
+      operationId: submitMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitMessageRequest'
+      responses:
+        '202':
+          description: Accepted and durably recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageAccepted'
+        '400':
+          description: |
+            Missing or blank userId or content (FR-017). No queued state is created.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: |
+            Shared store unreachable. Transient — the request may be retried (FR-022). Nothing
+            was accepted and no identifier was issued.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /messages/{messageId}:
+    get:
+      summary: Read a message's state and result
+      description: |
+        Reports whether the message is waiting, being answered, or final, with the answer or
+        failure reason once final (FR-010). Remains resolvable for the life of the environment
+        (FR-023).
+
+        The response does not echo the submitted content.
+      operationId: getMessage
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current state of the message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageStatus'
+        '404':
+          description: No message with that identifier.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: Shared store unreachable (FR-022).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /callbacks/llm:
+    post:
+      summary: Report completion of a language-model operation
+      description: |
+        The asynchronous completion path (FR-005). Any instance may receive this and will
+        complete the message regardless of which instance submitted it (FR-006) — no affinity,
+        no routing key, no shared session.
+
+        Completing a message releases the user's claim and starts their next waiting message,
+        whether the outcome was an answer or a failure (FR-016).
+
+        Idempotent by final state: a repeat for an already-final message completes nothing a
+        second time and advances the queue no further (FR-014, SC-010). The same applies to a
+        callback arriving after the claim expired — the message stays failed and the user's
+        currently active message is untouched (FR-013b).
+
+        No caller verification of any kind (FR-020a).
+      operationId: reportCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletionCallback'
+      responses:
+        '204':
+          description: |
+            Accepted. Returned both when this callback completed the message and when it was a
+            no-op because the message was already final — the caller cannot and need not tell
+            the difference.
+        '400':
+          description: Malformed callback, or a status value outside the allowed set.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            No message with that identifier (FR-015). Nothing else is altered; in particular no
+            other message's turn is released.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: |
+            Shared store unreachable (FR-022). The answer is lost, since delivery is
+            at-most-once (FR-019a) — claim expiry will resolve the message.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /health:
+    get:
+      summary: Instance and store reachability
+      description: |
+        Reports whether this instance can reach the shared store. Exists so that the
+        store-outage scenario has an observable signal that the instance is alive while the
+        store is not (R-009).
+      operationId: getHealth
+      responses:
+        '200':
+          description: Instance is up and the shared store is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Instance is up; the shared store is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+components:
+  schemas:
+
+    SubmitMessageRequest:
+      type: object
+      required: [userId, content]
+      properties:
+        userId:
+          type: string
+          minLength: 1
+          description: |
+            Client-supplied and trusted (FR-020). The unit of ordering and exclusivity — two
+            submissions sharing a userId are serialized against each other and nothing else.
+          example: user-42
+        content:
+          type: string
+          minLength: 1
+          example: Summarize the attached report.
+      additionalProperties: false
+
+    MessageAccepted:
+      type: object
+      required: [messageId, userId, sequence, state, acceptedAt]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+          description: |
+            Position in the global acceptance order. Comparable across instances; per-user FIFO
+            is ascending sequence within a userId (FR-002). Gaps are expected.
+        state:
+          $ref: '#/components/schemas/MessageState'
+        acceptedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+
+    MessageStatus:
+      type: object
+      required: [messageId, userId, sequence, state, acceptedAt]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        state:
+          $ref: '#/components/schemas/MessageState'
+        answer:
+          type: [string, 'null']
+          description: Present only when state is Completed.
+        failureReason:
+          type: [string, 'null']
+          description: |
+            Present only when state is Failed. Distinguishes a provider-reported failure from a
+            claim expiry.
+        acceptedAt:
+          type: string
+          format: date-time
+        claimedAt:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            When the message started processing. Retained after the message reaches a final
+            state, because ordering of claimedAt across a user's messages is how FIFO start
+            order is asserted from data rather than from test timing (SC-002).
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+      additionalProperties: false
+
+    MessageState:
+      type: string
+      enum: [Pending, Processing, Completed, Failed]
+      description: |
+        Pending — accepted, waiting its turn (unbounded).
+        Processing — claimed; at most one per user at any moment (FR-003).
+        Completed — an answer was recorded. Terminal.
+        Failed — a failure was recorded, by the provider or by claim expiry. Terminal.
+
+    CompletionCallback:
+      type: object
+      required: [messageId, status]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [completed, failed]
+        answer:
+          type: [string, 'null']
+          description: Required when status is completed.
+        error:
+          type: [string, 'null']
+          description: Recorded as the failure reason when status is failed.
+      additionalProperties: false
+
+    Health:
+      type: object
+      required: [instanceId, storeReachable]
+      properties:
+        instanceId:
+          type: string
+          description: Diagnostics only. Nothing routes by it (FR-006).
+        storeReachable:
+          type: boolean
+      additionalProperties: false
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+          description: Never contains message content (FR-021).
